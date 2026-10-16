@@ -20,7 +20,7 @@ Sesudah rehearsal/preview lulus, hentikan dua LaunchAgent lama dan buktikan lock
 
 Importer mempertahankan ID job/schedule/post, payload/path media, status/quota, tujuan asli, cursor, event, konteks dan dedupe reply. Asset sumber sama dari dua arsip memakai namespace terpisah sehingga hasil render lama tidak saling menimpa. Mengirim ulang URL lama tidak menambah tujuan baru. Sumber tidak diubah. Offset Telegram lama tidak disalin. Batch lama memiliki chat netral; outbox lama ditahan pada snapshot dengan jumlah tercatat, bukan dikirim menggunakan bot baru ke penerima yang belum terpetakan.
 
-Aktivasi pilot memakai satu Reel baru pilihan pengguna. Batasi akun pilot per platform melalui snapshot eligible yang sudah diuji; perluasan setelah bukti pilot. Simpan tiga URL terbit, ID jadwal/post, checksum Drive, notifikasi, serta status automasi yang dibaca ulang. Posting YouTube dengan spesifikasi Shorts tetap perlu bukti hasil publik; jadwal diterima saja belum cukup.
+Aktivasi pilot memakai satu Reel baru pilihan pengguna. Pastikan sumber belum ada pada jobs/assets legacy sebelum cutover. Set SQLite pilot_source_id ke sumber baru tersebut; gate ini membatasi POST publikasi ke satu sumber dengan satu akun eligible per platform. Pertahankan reply_enabled=false selama pilot karena gate sumber tidak membatasi worker reply. Hapus gate dan aktifkan reply hanya sesudah bukti pilot. Simpan tiga URL terbit, ID jadwal/post, checksum Drive, notifikasi, serta status automasi yang dibaca ulang. Posting YouTube dengan spesifikasi Shorts tetap perlu bukti hasil publik; jadwal diterima saja belum cukup.
 
 ## Penjadwalan dan ruang kerja
 
@@ -41,3 +41,5 @@ Hentikan service sebelum mengganti DB. Simpan DB melalui `backup` dan seluruh at
 Jangan menghapus journal, ID remote, counts_quota, atau status unknown agar job bisa dikirim lagi. Reconcile dahulu. Jangan menghidupkan bot lama dengan snapshot pra-cutover setelah bot baru mengirim; delta schedule/reply dan kuota harus dipetakan balik sebelum ownership dipindahkan. Jika rollback belum dapat dibuktikan aman, tahan kedua pengirim dan biarkan jadwal remote yang sudah ada dipantau.
 
 Cleanup hanya file kerja yang memiliki bukti semua tujuan wajib published, waktu publikasi terakhir+24jam, checksum Bank/Drive lengkap, enam frame, manifest MCP completed, dan tidak ada referensi lain. Ketiga workspace termasuk preview/arsip diperiksa. Arsip legacy di luar batas runtime baru tetap dilindungi; jangan menghapusnya manual untuk merapikan.
+
+Uji yang dimasukkan dari sesi operator memakai batch chat_id=0/user_id=0 dan message_id negatif unik, dengan event operator_pilot_enqueued berisi actor, authorization, dan intake_channel=operator_cli. Jangan mengarang update Telegram. Batch operator tetap chat0 selama aktif agar tidak membentuk reply-thread ke message ID negatif. Setelah getChat admin berhasil, laporan dapat dikirim eksplisit tanpa thread; kiriman Telegram asli tetap memakai ID update/message asli.

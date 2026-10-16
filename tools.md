@@ -2,6 +2,16 @@
 
 Root proyek: `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader`. Nama volume DATA KERJA memiliki spasi di akhir; kutip seluruh path.
 
+## Cakupan verifikasi implementasi terbaru
+
+Checkpoint 16 Oktober 2026 pada commit [54e4417](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/commit/54e4417d01b031b472f541a4492418dcbfe58d05): **263/263 tes offline PASS, tanpa skip**, verifier full lokal PASS, serta [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853332246) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853445793) success. CI menjalankan pemeriksaan source dan seluruh suite dengan dependency terkunci, tanpa credential, jaringan aplikasi atau deployment. Bukti lokal: `runtime/verification/verify-20261016T045916808690Z/` dan `runtime/verification/implementation-20261016/git-initial-deploy.json`.
+
+Preview nyata sudah membuktikan download MCP, transkripsi/enam frame, render 17,068 detik 720×1280 30 fps H.264/AAC dengan mirror/zoom 110%/hook [0,3), serta Drive dengan ukuran dan SHA-256 penuh yang cocok. Generasi metadata persona tiga akun fixture dan draft reply memakai model aktual `gpt-6.1-sol`; payload tiga platform lulus validasi offline tanpa request Repliz. Bukti pengembangan disalin ke `runtime/verification/implementation-20261016/development-artifacts/`.
+
+Rehearsal migrasi mencocokkan 158 jobs/assets (129 published, 29 failed), 539 comment events dan 126 reply attempts, termasuk identitas, checkpoint, kuota dan cutoff. Missing active schedules dan journal unresolved sama-sama 0; staging tetap paused dan `ready=false` karena belum memakai snapshot final. Bukti: `runtime/verification/implementation-20261016/rehearsal-validation.json` dan `rehearsal-reconcile.json`.
+
+Belum ada publikasi atau aksi komentar nyata dari paket ini pada checkpoint tersebut. Pengujian outage/rollback operasional, freeze/import final, pilot tiga platform, dan notifikasi nyata tetap dicatat terpisah. Matriks hasil dan batas buktinya ada di [ACCEPTANCE.md](docs/ACCEPTANCE.md). Tabel berikut adalah arsip akses audit sebelum implementasi, bukan status kemampuan yang belum diuji saat ini.
+
 ## Akses yang diaudit sebelum implementasi
 
 | Komponen | Lokasi atau identitas | Bukti audit 16 Oktober 2026 |
@@ -15,7 +25,7 @@ Root proyek: `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-do
 | Repo privat | [fahra-farming-autonomous-fb-tiktok-ytb](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb) | GitHub CLI membuat repo; hash/CI akhir pada bukti lokal |
 | Bukti lokal | runtime/verification/planning-20261016/ | Ringkasan akses tanpa token, hasil pemeriksaan, CI, dan final.json |
 
-File AI baru memakai label `base-url`, `api-key`, `model-combo`. Parser lama memakai underscore dan nama model berbeda. Adapter baru harus menormalisasi label yang didukung, menolak nilai ganda yang bertentangan, dan melaporkan nama field tanpa nilainya. Endpoint dan model dibaca dari file; jangan menyimpan hostname tunnel sementara ke source sebagai default permanen. Pilihan model tetap cx/gpt-6.1-sol untuk caption/persona adalah usulan agar keluaran tidak berubah karena rotasi combo.
+File AI baru memakai label `base-url`, `api-key`, `model-combo`. Parser implementasi mendukung normalisasi hyphen/underscore, menolak nilai ganda yang bertentangan, dan melaporkan nama field tanpa nilainya; perilaku ini diuji pada suite offline. Endpoint/kunci dibaca dari konfigurasi atau file credential; jangan menyimpan hostname tunnel sementara ke source sebagai default permanen. Konfigurasi caption/persona saat ini memakai `cx/gpt-6.1-sol`; model aktual pada preview tercatat `gpt-6.1-sol`.
 
 Baca API key hanya dalam proses lokal. Hindari curl berisi token pada argumen, mencetak respons akun mentah, dump env, atau log exception URL Telegram. GET getMe/getWebhookInfo boleh untuk health; getUpdates hanya boleh dimiliki satu polling worker bot tersebut.
 

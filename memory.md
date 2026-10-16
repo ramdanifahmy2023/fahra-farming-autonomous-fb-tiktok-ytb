@@ -1,6 +1,6 @@
 # Memori proyek
 
-Diperbarui 16 Oktober 2026. Status: pengguna meminta implementasi seluruh paket. Implementasi sedang diuji pada branch work/20261016-implementation; aktivasi dicatat terpisah setelah bukti cutover. Hasil Git/CI akhir tercatat di runtime/verification/planning-20261016/final.json.
+Diperbarui 16 Oktober 2026 sekitar 12:04 WIB. Implementasi sudah tergabung/push pada main, commit 54e4417, CI branch dan main sukses, 263/263 tes lulus. Migrasi final dan ownership sudah aktif. Dua layanan lama sudah bootout dan disabled persisten; layanan baru id.fahra.automation.social berjalan. **Publikasi masih dijeda dan reply belum diaktifkan karena pilot menunggu link baru yang belum pernah diproses.** Bukti terbaru: runtime/verification/implementation-20261016/. Bukti audit awal tetap di planning-20261016/.
 
 ## Keputusan yang tidak perlu ditanyakan ulang
 
@@ -10,7 +10,7 @@ Diperbarui 16 Oktober 2026. Status: pengguna meminta implementasi seluruh paket.
 4. Pengguna mengubah batas awal lima menjadi maksimal 20 video per akun per hari WIB pada percakapan 16 Oktober. Berlaku untuk paket baru. Kuota reply terpisah; 20 bukan janji semua platform mengizinkan 20 kiriman nyata.
 5. Akun baru pada ketiga platform otomatis masuk rotasi setelah snapshot/koneksi/kuotanya lengkap. Akun putus dilewati; reconnect mempertahankan histori. Tidak perlu enrollment manual per akun untuk posting.
 6. TikTok iq7fanspage dikecualikan mutlak. Facebook Page IQ7 tidak sama dengan akun tersebut.
-7. Paket menggantikan dua workflow lama setelah tes lulus. Layanan lama berjalan sampai migrasi final; periksa status aktual sebelum aktivasi.
+7. Paket menggantikan dua workflow lama setelah tes lulus. Kedua layanan lama telah dihentikan pada 16 Oktober sekitar 12:02 WIB. Jangan mengaktifkan kembali tanpa rekonsiliasi delta dan pemindahan ownership.
 8. Bank konten bernama `Bank-konten-fahra-automation-tiktok-ig-fb-ytb/`, disinkronkan Drive Desktop menurut pengguna. Link folder ada di Credential/google-drive-link.md. Instagram adalah sumber, bukan tujuan posting tambahan.
 9. Edit dan gaya caption/reply mengikuti workflow sebelumnya. Input publik dan kendali admin ID 265732518 diwarisi dari pilihan pengguna sebelumnya; batas batch/backlog dirancang tanpa mengganti mode publik diam-diam.
 10. Cleanup tetap minimal 24 jam setelah semua tujuan wajib published, melindungi bank/Drive, frame, transkrip, konteks, histori, dan referensi workspace lama.
@@ -32,4 +32,8 @@ Audit menemukan bug snapshot/kuota, tanggal jadwal, dedup hasil remote yang belu
 - Satu pemilik reply custom 9Router pada posting yang dikelola, native like/moderasi hanya jika platform mendukung dan hasil pilot terbukti. Default automasi calon akun baru disiapkan otomatis; capability yang belum terbukti tidak diaktifkan secara spekulatif.
 - Profil bersama awal 9:16, 3–90 detik untuk irisan dukungan ketiga adapter. Video lebih panjang/rasio lain memerlukan kebijakan adaptasi atau review; jangan diam-diam dipotong atau diterbitkan sebagai video YouTube biasa.
 
-Tahap berjalan: suite, preview nyata, rehearsal migrasi, lalu cutover dan pilot. Link pilot pilihan pengguna: https://www.instagram.com/reel/DaLK4M_JU9W/. Tahap, dependensi, serta bukti lulus ada di [PLAN.md](docs/PLAN.md), [ACCEPTANCE.md](docs/ACCEPTANCE.md), dan [MIGRATION.md](docs/MIGRATION.md).
+Tahap berjalan: menyelesaikan pilot publikasi. Preview DaLK4M_JU9W lulus tanpa POST, tetapi link tersebut ternyata memiliki pekerjaan TikTok legacy failed dengan ID jadwal Repliz. Enqueue produksi menolak duplikat dan tidak menciptakan delivery baru. Pengguna sudah diminta mengirim link lain dan menekan Start pada @Fahra_autonomousbot (getChat admin masih chat not found pada pemeriksaan terakhir). Jangan melewati dedup atau membuat update Telegram palsu untuk uji. Tahap, dependensi, serta bukti lulus ada di [PLAN.md](docs/PLAN.md), [ACCEPTANCE.md](docs/ACCEPTANCE.md), dan [MIGRATION.md](docs/MIGRATION.md).
+
+## Status migrasi aktual
+
+Manifest final 03bf0b76ff714313a4d8c7cb99e0005d: 158 pekerjaan/aset lama (129 published, 29 failed), 22 konteks, 541 komentar, 126 percobaan reply. Perbandingan seluruh baris penting PASS; missing active schedules dan journal unresolved nol. Tujuan lama tetap TikTok saja atau FB+YT; tidak ada backfill. Satu batch operator kosong tercatat dari percobaan pilot yang ditolak dedup. Konfigurasi lokal live/publish_enabled=true, tetapi SQLite paused=true dan reply_enabled=false. Pilot gate source DaLK4M_JU9W harus diganti ke sumber baru terverifikasi sebelum unpause. Cleanup belum aktif. Intake Telegram sudah berjalan, sehingga input baru dapat tercatat sambil publikasi dijeda.
