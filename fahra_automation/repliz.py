@@ -243,6 +243,7 @@ class Repliz:
 
     @staticmethod
     def payload(job, when):
+        from .attribution import credit_description, require_attribution
         platform = job.get('platform')
         if platform not in PLATFORMS or not job.get('account_id') or job['account_id'] == EXCLUDED_ACCOUNT_ID:
             raise ConfigurationError('Akun tujuan belum dialokasikan atau dikecualikan.')
@@ -267,6 +268,7 @@ class Repliz:
             description = caption + ('\n\n' + ' '.join(hashtags) if hashtags else '')
         if not isinstance(description, str) or not description.strip() or len(description) > (2200 if platform == 'tiktok' else 5000):
             raise ValueError('Caption/deskripsi melampaui batas platform atau kosong.')
+        description = credit_description(description, require_attribution(job), 2200 if platform == 'tiktok' else 5000)
         info = {'targetCountries': ['ID'], 'isDraft': False}
         if platform == 'youtube':
             tags = metadata.get('tags', [])

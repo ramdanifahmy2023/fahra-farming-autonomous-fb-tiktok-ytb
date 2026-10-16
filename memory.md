@@ -12,7 +12,7 @@ Diperbarui 16 Oktober 2026 sekitar 12:04 WIB. Implementasi sudah tergabung/push 
 6. TikTok iq7fanspage dikecualikan mutlak. Facebook Page IQ7 tidak sama dengan akun tersebut.
 7. Paket menggantikan dua workflow lama setelah tes lulus. Kedua layanan lama telah dihentikan pada 16 Oktober sekitar 12:02 WIB. Jangan mengaktifkan kembali tanpa rekonsiliasi delta dan pemindahan ownership.
 8. Bank konten bernama `Bank-konten-fahra-automation-tiktok-ig-fb-ytb/`, disinkronkan Drive Desktop menurut pengguna. Link folder ada di Credential/google-drive-link.md. Instagram adalah sumber, bukan tujuan posting tambahan.
-9. Edit dan gaya caption/reply mengikuti workflow sebelumnya. Input publik dan kendali admin ID 265732518 diwarisi dari pilihan pengguna sebelumnya; batas batch/backlog dirancang tanpa mengganti mode publik diam-diam.
+9. Instruksi terbaru 16 Oktober: video **tanpa mirror**, tetap zoom110%, hook[0,3), audio asli. Caption/deskripsi TikTok, Facebook, dan YouTube wajib memuat `source: @username` Instagram sumber yang terverifikasi. Gaya caption/reply mengikuti workflow sebelumnya. Input publik dan kendali admin ID 265732518 diwarisi dari pilihan pengguna sebelumnya; batas batch/backlog dirancang tanpa mengganti mode publik diam-diam.
 10. Cleanup tetap minimal 24 jam setelah semua tujuan wajib published, melindungi bank/Drive, frame, transkrip, konteks, histori, dan referensi workspace lama.
 
 ## Bukti audit
@@ -37,3 +37,7 @@ Tahap berjalan: menyelesaikan pilot publikasi. Preview DaLK4M_JU9W lulus tanpa P
 ## Status migrasi aktual
 
 Manifest final 03bf0b76ff714313a4d8c7cb99e0005d: 158 pekerjaan/aset lama (129 published, 29 failed), 22 konteks, 541 komentar, 126 percobaan reply. Perbandingan seluruh baris penting PASS; missing active schedules dan journal unresolved nol. Tujuan lama tetap TikTok saja atau FB+YT; tidak ada backfill. Satu batch operator kosong tercatat dari percobaan pilot yang ditolak dedup. Konfigurasi lokal live/publish_enabled=true, tetapi SQLite paused=true dan reply_enabled=false. Pilot gate source DaLK4M_JU9W harus diganti ke sumber baru terverifikasi sebelum unpause. Cleanup belum aktif. Intake Telegram sudah berjalan, sehingga input baru dapat tercatat sambil publikasi dijeda.
+
+## Pekerjaan berjalan: orientasi dan kredit sumber
+
+Pengguna sudah mengirim Reel DbnsuCYybBP lewat bot baru. Batch63f40e1579474fc48888f20de204e81e memiliki satu asset55e8d6f3bd3b4211ac757399484aa12a dan tiga delivery queued; belum punya jadwal/intent. Respons onboarding bot dan kartu progres telah terkirim ke chat pengguna nyata. Publikasi tetap dijeda sampai perubahan tanpa mirror dan source credit lulus serta terpasang. Kredit berada di caption/deskripsi publik, bukan tambahan teks overlay video.

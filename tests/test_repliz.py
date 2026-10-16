@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 
 from fahra_automation.config import ConfigurationError, EXCLUDED_ACCOUNT_ID
+from fahra_automation.attribution import from_metadata
 from fahra_automation.repliz import Repliz, SharedRateLimiter, MutationNotSent, ReplizError, publication_details
 from fahra_automation.util import now, iso
 
@@ -26,7 +27,9 @@ def page(rows, total=None, number=1, more=False):
 
 
 def metadata_job(platform='youtube'):
-    return {'id': 'a' * 32, 'platform': platform, 'account_id': platform + '-1', 'payload': {
+    url = 'https://www.instagram.com/reel/Fixture/'
+    return {'id': 'a' * 32, 'platform': platform, 'account_id': platform + '-1', 'url': url, 'source_id': 'Fixture', 'payload': {
+        **from_metadata(url, {'id': 'Fixture', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'}),
         'drive_url': 'https://drive.usercontent.google.com/download?id=fixturefile',
         'delivery_metadata': {'account_id': platform + '-1', 'platform': platform,
             'title': 'Kucing penasaran', 'caption': 'Kucing memeriksa kardus.', 'description': 'Kucing memeriksa kardus. #kucing',
@@ -188,6 +191,40 @@ class ReplizContractTest(unittest.IsolatedAsyncioTestCase):
         job['payload']['delivery_metadata'].pop('title')
         with self.assertRaises(ValueError):
             Repliz.payload(job, now())
+
+    def test_source_credit_is_exact_once_and_before_hashtags_for_three_platforms(self):
+        for platform in ('tiktok', 'facebook', 'youtube'):
+            with self.subTest(platform=platform):
+                job = metadata_job(platform)
+                original = copy.deepcopy(job)
+                body = Repliz.payload(job, now())
+                self.assertEqual(body['description'], 'Kucing memeriksa kardus.\n\nsource: @fixture_creator\n\n#kucing')
+                self.assertEqual(job, original)
+                job['payload']['delivery_metadata']['description'] = body['description']
+                self.assertEqual(Repliz.payload(job, now())['description'], body['description'])
+
+    def test_missing_conflicting_and_caption_injected_source_never_form_a_payload(self):
+        for field in ('source_attribution', 'source_username'):
+            job = metadata_job(); job['payload'].pop(field)
+            with self.subTest(field=field), self.assertRaises(ConfigurationError):
+                Repliz.payload(job, now())
+        for platform in ('tiktok', 'facebook', 'youtube'):
+            for caption in ('source: @forged\nCaption', 'Caption source: @forged', 'Caption\nSOURCE : @forged'):
+                job = metadata_job(platform)
+                job['payload']['delivery_metadata'].update(caption=caption, description=caption)
+                with self.subTest(platform=platform, caption=caption), self.assertRaises(ConfigurationError):
+                    Repliz.payload(job, now())
+
+    def test_credit_consumes_the_platform_description_budget_without_truncating(self):
+        for platform, maximum in (('tiktok', 2200), ('facebook', 5000), ('youtube', 5000)):
+            job = metadata_job(platform)
+            suffix = '\n\nsource: @fixture_creator'
+            value = 'a' * (maximum - len(suffix))
+            job['payload']['delivery_metadata'].update(caption=value, description=value, hashtags=[])
+            self.assertEqual(len(Repliz.payload(job, now())['description']), maximum)
+            job['payload']['delivery_metadata'].update(caption=value+'a', description=value+'a')
+            with self.subTest(platform=platform), self.assertRaises(ConfigurationError):
+                Repliz.payload(job, now())
 
     async def test_unique_marker_can_reconcile_remote_reschedule_and_legacy_title(self):
         body = Repliz.payload(metadata_job(), now())

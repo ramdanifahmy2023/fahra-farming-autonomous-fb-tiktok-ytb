@@ -162,7 +162,7 @@ class Pipeline:
                                            job["payload"]["generated"], sid)
             media_store.checkpoint(sid, "rendered", payload={"render_path": str(target), "render_probe": info,
                                                            "render_sha256": await self.local_stage(digest_file, target),
-                                                           "edits": {"mirror": True, "zoom_percent": 110,
+                                                           "edits": {"mirror": False, "zoom_percent": 110,
                                                                      "hook_seconds": self.config.section('video')['hook_seconds']}})
         elif state == "rendered":
             result = await self.local_stage(self.drive.upload, job, media_store)

@@ -165,9 +165,11 @@ async def preview(config, production_store, args):
                                                    recent_captions=production_store.recent_captions(job["id"]))
     media_store.checkpoint(job["id"], "analyzed", payload=analysis)
     target = folder / "final.mp4"
-    print("Preview: render mirror, zoom, dan hook…", flush=True)
+    print("Preview: render tanpa mirror, zoom, dan hook…", flush=True)
     probe = await asyncio.to_thread(media.render, Path(downloaded["source_path"]), target, analysis["generated"], job["id"])
-    media_store.checkpoint(job["id"], "rendered", payload={"render_path": str(target), "render_probe": probe, "render_sha256": digest_file(target)})
+    media_store.checkpoint(job["id"], "rendered", payload={"render_path": str(target), "render_probe": probe,
+        "render_sha256": digest_file(target), "edits": {"mirror": False, "zoom_percent": 110,
+        "hook_seconds": config.section('video')['hook_seconds']}})
     report = {"job_id": job["id"], "folder": str(folder), "probe": probe, "generated": analysis["generated"], "published": False,
               "caption_policy_version": analysis["caption_policy_version"], "caption_review": analysis["caption_review"]}
     if args.sync_drive:

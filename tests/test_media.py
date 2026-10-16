@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from fahra_automation.config import Config
+from fahra_automation.attribution import from_metadata
 from fahra_automation.downloader import Downloader, DownloadUncertain
 from fahra_automation.media import Media
 
@@ -15,6 +16,15 @@ GOOD = {'duration': 30, 'width': 1080, 'height': 1920, 'codec': 'h264', 'audio':
 
 
 class MediaTest(unittest.TestCase):
+    def test_render_filter_keeps_original_orientation_zoom_and_hook_timing(self):
+        media = Media(Config.load())
+        vf = media.render_filter(720, 1280, '/tmp/fixture-render')
+        self.assertTrue(vf.startswith('scale=792:1408,crop=720:1280:(iw-ow)/2:(ih-oh)/2,setsar=1,'))
+        self.assertIn("enable='lt(t,3)'", vf)
+        self.assertIn('textfile=/tmp/fixture-render/hook.txt:expansion=none:', vf)
+        for transformation in ('hflip', 'vflip', 'transpose', 'rotate'):
+            self.assertNotIn(transformation, vf)
+
     def test_shared_profile_accepts_boundaries_and_no_audio(self):
         for duration in (3, 90):
             for platform in ('tiktok', 'facebook', 'youtube'):
@@ -62,10 +72,14 @@ class DownloaderTest(unittest.IsolatedAsyncioTestCase):
         source.write_bytes(b'fixture')
         self.downloader.journal.begin('download:asset1', {'url': self.job['url']})
         self.downloader.journal.mark('download:asset1', 'accepted', schedule_id='mcp-a')
-        self.downloader.call = AsyncMock(return_value={'status': 'completed', 'files': [{'path': str(source)}]})
+        self.downloader.call = AsyncMock(return_value={'status': 'completed', 'job_id': 'mcp-a', 'url': self.job['url'], 'files': [{'path': str(source)}]})
+        self.downloader.inspect_source = AsyncMock(return_value=from_metadata(
+            self.job['url'], {'id': 'a', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'}))
         result = await self.downloader.download(self.job, self.store)
         self.assertEqual(result['mcp_job_id'], 'mcp-a')
         self.assertEqual(self.downloader.call.call_args.args[1], 'instagram_download_status')
+        self.downloader.inspect_source.assert_awaited_once_with(self.job['url'])
+        self.assertEqual(result['source_username'], 'fixture_creator')
 
     def test_source_rejects_foreign_job_arbitrary_file_and_symlink_parent(self):
         source = self.root / 'mcp/downloads/mcp/mcp-a/media/source.mp4'

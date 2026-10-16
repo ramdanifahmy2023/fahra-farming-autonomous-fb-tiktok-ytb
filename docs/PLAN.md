@@ -1,6 +1,6 @@
 # Rencana implementasi paket Fahra Automation
 
-Status 16 Oktober 2026: rancangan berdasarkan audit, belum ada worker baru yang aktif. Keputusan pengguna: satu link menuju tiga platform, maksimal 20 video per akun/hari WIB, akun baru otomatis ikut rotasi, paket menggantikan dua workflow lama setelah uji lulus.
+Status rancangan awal 16 Oktober 2026; pelaksanaan aktual ada di memory/worklog. Perubahan pengguna berikutnya: render tanpa mirror dan caption publik mencantumkan akun Instagram sumber. Keputusan pengguna: satu link menuju tiga platform, maksimal 20 video per akun/hari WIB, akun baru otomatis ikut rotasi, paket menggantikan dua workflow lama setelah uji lulus.
 
 ## Alur yang dibangun
 
@@ -10,7 +10,7 @@ flowchart TD
     B --> C[Satu asset: unduh lewat MCP]
     C --> D[Probe video, enam frame, transkripsi]
     D --> E[Fakta video, hook, caption, hashtag dan persona]
-    E --> F[Render mirror, zoom 110 persen, hook 3 detik]
+    E --> F[Render orientasi asli, zoom 110 persen, hook 3 detik]
     F --> G[Bank konten lalu verifikasi Drive]
     G --> H[Antrean TikTok]
     G --> I[Antrean Facebook Page]
@@ -64,7 +64,7 @@ MCP tetap menjadi downloader Instagram. Dedup URL dan hash, pencatatan start req
 
 Usulan profil bersama awal: 9:16, durasi 3–90 detik, H.264/yuv420p, AAC bila ada audio, faststart, batas ukuran paling ketat dari adapter. Rasio/durasi lain masuk evaluasi adaptasi; jangan crop bagian penting, memotong durasi, atau mengirim YouTube biasa tanpa keputusan yang sesuai. Video Shorts tetap perlu bukti klasifikasi platform. Ketentuan adapter ada di [matriks kemampuan](PLATFORM_CAPABILITIES.md).
 
-Tahap AI memisahkan pengamatan fakta, ketidakpastian, lalu penulisan. Pertahankan confidence pengamatan, riwayat caption, dan model aktual; jangan menyediakan caption generik saat bukti kabur. TikTok/FB memakai caption dan hashtag Indonesia; YouTube memiliki title, description, hashtag, serta tags tersendiri. Persona boleh mengubah gaya dan reaksi, tidak mengubah fakta atau mengaku mengalami kejadian.
+Tahap AI memisahkan pengamatan fakta, ketidakpastian, lalu penulisan. Pertahankan confidence pengamatan, riwayat caption, dan model aktual; jangan menyediakan caption generik saat bukti kabur. TikTok/FB memakai caption dan hashtag Indonesia; YouTube memiliki title, description, hashtag, serta tags tersendiri. Caption/deskripsi publik ketiganya mendapat baris `source: @username` dari metadata akun Instagram sumber. Username tidak diambil dari hasil AI atau nama tampilan. Persona boleh mengubah gaya dan reaksi, tidak mengubah fakta atau mengaku mengalami kejadian.
 
 Persona default mengikuti gaya pengguna: santai/lucu Gen Z, singkatan seperlunya, 0–2 emoji bila cocok, lebih tenang untuk kabar serius. Per akun dapat diberi versi profil lain kemudian. Snapshot persona untuk caption/draft/jadwal tetap stabil setelah restart. Perubahan profil tidak mengubah posting terbit atau draft yang sudah dikirim secara diam-diam. Jika delivery belum memiliki intent lalu dialihkan ke akun lain, binding dan metadata persona lama dibatalkan dan disiapkan kembali sebelum intent. Render khusus persona, bila kelak diperlukan, harus menjadi revisi artifact tersendiri. Model tetap cx/gpt-6.1-sol diusulkan untuk konsistensi, dengan akses tetap dari 9Router pengguna.
 

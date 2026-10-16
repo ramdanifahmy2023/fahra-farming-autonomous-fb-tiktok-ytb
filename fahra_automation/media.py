@@ -85,13 +85,22 @@ class Media:
                       "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(sound)])
         return frames, sound
 
+    def render_filter(self, width, height, scratch):
+        scaled_width = round(width * 1.1 / 2) * 2
+        scaled_height = round(height * 1.1 / 2) * 2
+        size = max(20, round(width / 18))
+        return (f"scale={scaled_width}:{scaled_height},crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,"
+                "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
+                f"textfile={scratch}/hook.txt:expansion=none:fontsize={size}:fontcolor=white:"
+                f"borderw=2:bordercolor=black:box=1:boxcolor=black@0.45:boxborderw={size//3}:"
+                f"line_spacing=6:x=(w-tw)/2:y=h*0.68:enable='lt(t,{self.config.section('video')['hook_seconds']})'")
+
     def render(self, source, target, generated, job_id):
         info = self.probe(source)
         self.validate_shared(info)
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', job_id):
             raise ValueError('Identitas render tidak valid.')
         w, h = info["width"] // 2 * 2, info["height"] // 2 * 2
-        sw, sh = round(w * 1.1 / 2) * 2, round(h * 1.1 / 2) * 2
         target.parent.mkdir(parents=True, exist_ok=True)
         hook = target.parent / "hook.txt"
         hook.write_text("\n".join(textwrap.wrap(generated["hook"], width=25)), encoding="utf-8")
@@ -101,12 +110,7 @@ class Media:
         try:
             self.run([self.docker, "cp", str(source), self.container + ":" + scratch + "/source.mp4"])
             self.run([self.docker, "cp", str(hook), self.container + ":" + scratch + "/hook.txt"])
-            size = max(20, round(w / 18))
-            vf = (f"hflip,scale={sw}:{sh},crop={w}:{h}:(iw-ow)/2:(ih-oh)/2,setsar=1,"
-                  "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                  f"textfile={scratch}/hook.txt:expansion=none:fontsize={size}:fontcolor=white:"
-                  f"borderw=2:bordercolor=black:box=1:boxcolor=black@0.45:boxborderw={size//3}:"
-                  f"line_spacing=6:x=(w-tw)/2:y=h*0.68:enable='lt(t,{self.config.section('video')['hook_seconds']})'")
+            vf = self.render_filter(w, h, scratch)
             self.run([*docker, "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", scratch + "/source.mp4",
                       "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
                       "-crf", str(self.config.section("video")["crf"]), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",

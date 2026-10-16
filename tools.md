@@ -62,3 +62,12 @@ Backup database melalui API SQLite ke `~/Library/Application Support/FahraAutoma
 ## Referensi lama dan kepemilikan
 
 TikTok lama: `/Volumes/DATA KERJA /Project Dev/Peternakan-akun`, label `id.fahra.peternakan`. FB/YT lama: `/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb`, label `id.fahra.peternakan.fb-ytb`. Migrasi mengikuti [MIGRATION.md](docs/MIGRATION.md), SQLite backup API, checksum, dan rekonsiliasi remote. Data aktif tidak disalin mentah ke worktree. Worker baru menahan lock kedua root lama selama hidup; setiap mutasi Repliz juga memeriksa ownership dan status kedua LaunchAgent lama.
+
+
+## Kredit sumber Instagram dan orientasi video
+
+Instruksi terbaru pengguna: hasil baru tidak di-mirror. Zoom110% dan hook[0,3) tetap. Renderer menyimpan edits.mirror=false; arsip lama dengan mirror=true tetap menjadi histori.
+
+Downloader tetap MCP. Metadata pemilik dibaca read-only melalui yt-dlp pada container downloader yang sama, memakai lock `/tmp/instagram-mcp.lock`; source MCP tidak diubah. Hanya channel/owner.username/user.username dari extractor Instagram dan shortcode/URL yang cocok menjadi bukti username. Nama tampilan, caption, dan uploader_id bukan sumber kredit. Metadata yang hilang/bertentangan menahan pengiriman.
+
+Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada caption/deskripsi ketiga platform dan menghitung batas karakter sesudah kredit. Kredit bukan teks overlay tambahan. Job yang sudah ber-intent/terbit tetap memakai body tersimpan. Retry manual arsip yang sudah melewati download tanpa bukti atribusi membutuhkan revisi/enrichment terverifikasi; jangan menebak kredit atau menerbitkan ulang artifact mirror lama.

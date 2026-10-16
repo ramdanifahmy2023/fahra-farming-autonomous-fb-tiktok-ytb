@@ -71,3 +71,17 @@ Pilot DaLK4M_JU9W ternyata sudah ada dalam arsip TikTok: failed dengan ID jadwal
 Bukti pengembangan diarsipkan pada runtime/verification/implementation-20261016/development-artifacts:50file,4snapshotSQLite melalui backup API (quick_check ok),6frame dan1video preview,checksum salinan cocok. Worktree tetap disimpan karena pilot publikasi belum selesai; bukti pengembangan sudah diarsipkan, tetapi jangan menghapus worktree sebelum hambatan pilot ditutup dan hasil akhir dicatat. Bank/Drive dan media lama tidak dihapus.
 
 Backup cutover tambahan tersimpan pada penyimpanan internal `~/Library/Application Support/FahraAutomation/cutover-20261016/`: backup SQLite terverifikasi, ownership, manifest, validasi final, dan bukti freeze. Attempt journal tetap di direktori internal tersendiri. Status hidup service tidak dipakai sebagai bukti publikasi atau notifikasi berhasil.
+
+
+## 16 Oktober 2026: video tanpa mirror dan kredit Instagram
+
+Pengguna mengirim Reel baru melalui bot dan meminta editor tidak melakukan mirror; caption harus memuat akun Instagram sumber. Pemeriksaan produksi menemukan DbnsuCYybBP pada batch63f40e1579474fc48888f20de204e81e, satuasset dan tiga delivery queued tanpa jadwal/intent, paused=true. Respons onboarding dan kartu progres Telegram tercatat terkirim. Dua label lama tetap retired; tidak ada polling kedua.
+
+Pekerjaan dilakukan pada branch work/20261016-source-credit, worktree `/Volumes/DATA KERJA /Project Dev/worktrees/fahra-farming-autonomous-fb-tiktok-ytb/20261016-source-credit`, base0f4db570e46f8e5c20e2d3d1489141c781f47ef6. Venv/runtime fixture terpisah; credential direferensikan dari file lokal, DB produksi tidak disalin ke worktree. Kebijakan baru berlaku untuk pekerjaan yang belum dikirim, bukan mengubah arsip video atau jadwal terbit. Hasil tes, preview, deployment, serta pilot dicatat setelah dilakukan.
+
+
+Perubahan: filter FFmpeg tidak lagi memakai hflip; checkpoint renderer/preview mencatat mirror=false. Modul attribution memvalidasi sumber dan menambahkan kredit deterministik ke payload ketiga platform. Pembacaan metadata memakai yt-dlp pada container/lock yang sama; MCP tetap melakukan download. Metadata cached, manifest job+URL, dan sourcepath harus cocok. Fixture diperbarui agar menyediakan metadata sumber/manifest yang kini diwajibkan; kegagalan suite awal hanya menunjukkan fixture lama belum memuat kontrak itu, lalu suite diulang.
+
+Probe metadata nyata DbnsuCYybBP membuktikan channel=nopri.adi.16144. Preview nyata selesai tanpa POST:16,5detik720×1280/30fps/H264AAC,8.255.621byte, hash lokal/Drive331395e69a6ff2f5dcbade598e5a3e15930382e66c8e7e9069cb862767f6dc2c. MCP resume dengan kode final memvalidasi manifest tanpa download baru. Full checksum Drive.verify_delivery cocok. Pemeriksaan visual sumber/hasil3,2detik menunjukkan orientasi sama; hook terlihat1detik dan hilang3,2detik. Probe FFmpeg asimetris sintetis juga PASS. Payload preview tiga platform memuat source: @nopri.adi.16144 tepat sekali; teks platform pada probe ini berasal dari caption AI nyata yang dipetakan ke fixture metadata, bukan klaim posting. Bukti pada runtime/verification/source-credit/.
+
+Review independen tidak menemukan blocker pilot. Catatan: retry arsip lama yang sudah downloaded/rendered tanpa source_attribution sengaja tertahan sampai revisi metadata yang sah; arsip tidak ditulis ulang otomatis. Produksi tetap paused selama pengujian/perubahan dan belum menerbitkan pilot pada tahap ini.

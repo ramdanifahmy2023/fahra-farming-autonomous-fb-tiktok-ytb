@@ -4,7 +4,7 @@ Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit,
 
 - Maksimal **20 video per akun per hari WIB**. Rotasi bertahan antarbatch/restart; akun baru ikut otomatis setelah snapshot lengkap. Akun terputus dilewati.
 - Satu asset, tiga antrean mandiri. YouTube penuh tidak mengulang TikTok/FB yang sudah berhasil.
-- Mirror, zoom 110%, hook Indonesia tiga detik pertama, audio asli. Format bersama 9:16, 3–90 detik, H.264/AAC.
+- Orientasi asli tanpa mirror, zoom 110%, hook Indonesia tiga detik pertama, audio asli. Format bersama 9:16, 3–90 detik, H.264/AAC. Caption/deskripsi mencantumkan `source: @username` Instagram yang terverifikasi.
 - Bank konten disinkronkan Drive Desktop. Seluruh checksum diverifikasi lagi sebelum setiap pengiriman.
 - Persona Indonesia Gen Z, caption/hashtag berdasarkan isi video; balasan memakai konteks video dan komentar induk. Like/moderasi mengikuti kemampuan platform; YouTube tidak diberi like komentar.
 - File kerja dibersihkan paling cepat 24 jam setelah semua tujuan wajib terbit. Bank, Drive, konteks, frame, dan histori tetap disimpan.

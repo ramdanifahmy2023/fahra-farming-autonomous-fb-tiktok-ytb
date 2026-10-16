@@ -19,6 +19,8 @@ Path berawalan `runtime/` di bawah relatif terhadap root proyek produksi. Path b
 
 Tabel skenario berikut tetap menjadi kontrak penerimaan. Status di atas hanya berlaku pada cakupan bukti yang disebut, bukan pernyataan bahwa semua skenario nyata sudah lulus.
 
+Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit akun Instagram sumber. Bukti mirror pada tabel di atas merupakan hasil versi sebelumnya; perubahan baru memerlukan preview tersendiri.
+
 ## Fondasi, akun dan publikasi
 
 | ID | Skenario | Hasil wajib |
@@ -43,7 +45,7 @@ Tabel skenario berikut tetap menjadi kontrak penerimaan. Status di atas hanya be
 | M01 | Download start sukses lalu crash sebelum ID; orphan dapat/tidak dapat dipetakan; completed/partial/failed; MCP lock/timeout | Pemetaan terbukti dipakai ulang; start ambigu ditahan untuk pemulihan; komputasi lokal boleh diulang aman tanpa artifact resmi ganda; manifest cleanup konsisten |
 | M02 | Landscape/portrait, <3 detik, 90/180/>180 detik, audio kosong, codec/ukuran tidak cocok | Validator per platform jelas; tidak diam-diam memotong atau mengklaim Shorts pada video tidak sesuai |
 | M03 | Enam frame, speech/music/noisy, visual kabur, konten serius, prompt injection di caption/komentar | Fakta dan ketidakpastian disimpan; persona tidak mengarang; confidence tidak dinaikkan editor; data sumber tidak menjadi instruksi sistem |
-| M04 | Preview nyata dari link yang diberikan pengguna, tanpa membuat schedule | Satu download/render/Drive, mirror+zoom110%, hook pada [0,3), metadata sesuai, payload ketiga platform lolos validasi |
+| M04 | Preview nyata dari link yang diberikan pengguna, tanpa membuat schedule | Satu download/render/Drive, orientasi asli tanpa mirror + zoom110%, hook pada [0,3), kredit source Instagram terverifikasi, metadata sesuai, payload ketiga platform lolos validasi |
 | M05 | Google Drive pending sync, HTML/login, duplikat nama, ID cache usang, byte berubah dengan header MP4 sama | Seluruh checksum/ukuran sebelum tiap POST cocok atau nol POST; file untuk besok diperiksa kembali |
 | C01 | Persona berbeda, restart, versi berubah, delivery berpindah akun sebelum intent | Versi tepat melekat ke draft/delivery; hasil lama tidak diam-diam ditulis ulang; hook bersama tetap konsisten |
 | C02 | Top-level/nested comment, induk hilang, reply sudah ada, komentar edited/deleted | Konteks thread benar; induk hilang ditahan; komentar diri sendiri/duplikat tidak dibalas |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -9,12 +10,55 @@ from contextlib import asynccontextmanager
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .util import iso
+from .attribution import from_metadata, require_attribution
+from .config import ConfigurationError
+from .util import iso, normalize_url
 from .journal import AttemptJournal
 
 
 class DownloadUncertain(RuntimeError):
     """A start may have reached MCP; a proven job mapping is required before retry."""
+
+
+OWNER_METADATA_SCRIPT = r'''
+import contextlib, fcntl, io, json, sys
+
+class QuietLogger:
+    def debug(self, *args): pass
+    def warning(self, *args): pass
+    def error(self, *args): pass
+
+def selected(item):
+    if not isinstance(item, dict):
+        raise ValueError('Invalid Instagram metadata')
+    result = {key:item[key] for key in ('id','display_id','extractor_key','webpage_url','original_url','channel') if key in item}
+    for field in ('owner','user'):
+        if field in item:
+            value = item[field]
+            result[field] = {'username':value.get('username')} if isinstance(value,dict) else value
+    for field in ('coauthor_producers','collaborators'):
+        if field in item:
+            result[field] = [{'username':value.get('username')} if isinstance(value,dict) else value for value in item[field]]
+    if item.get('entries') is not None:
+        result['entries'] = [selected(entry) for entry in item['entries']]
+    return result
+
+try:
+    request = json.load(sys.stdin)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with open('/tmp/instagram-mcp.lock', 'a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            import bot, yt_dlp
+            options = bot.ytdlp_options(skip_download=True, extract_flat=False, playlistend=50,
+                getcomments=False, cachedir=False, cookiefile=None, cookiesfrombrowser=None,
+                writeinfojson=False, quiet=True, no_warnings=True, logger=QuietLogger())
+            with yt_dlp.YoutubeDL(options) as ydl:
+                metadata = selected(ydl.extract_info(request['url'], download=False))
+    response = {'ok':True, 'metadata':metadata}
+except Exception as exc:
+    response = {'ok':False, 'error_type':type(exc).__name__}
+print(json.dumps(response, ensure_ascii=False))
+'''
 
 
 class Downloader:
@@ -45,6 +89,35 @@ class Downloader:
     async def health(self):
         async with self.session() as client:
             return await self.call(client, "instagram_worker_status", {})
+
+    async def inspect_source(self, url):
+        canonical_url, _ = normalize_url(url)
+        cfg = self.config.section('downloader')
+        try:
+            process = await asyncio.create_subprocess_exec(
+                cfg['docker'], 'exec', '-i', '-w', '/app', cfg['container'],
+                'timeout', '--signal=TERM', '--kill-after=5s', '60s', 'python', '-c', OWNER_METADATA_SCRIPT,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        except OSError:
+            raise ConfigurationError('Worker metadata Instagram belum dapat dijalankan.') from None
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(json.dumps({'url': canonical_url}).encode()), timeout=75)
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            raise ConfigurationError('Pembacaan pemilik Instagram timeout; kiriman ditahan tanpa menebak sumber.') from None
+        if process.returncode or len(stdout) > 512_000:
+            raise ConfigurationError('Metadata pemilik Instagram belum tersedia dari worker downloader.')
+        try:
+            response = json.loads(stdout)
+        except (ValueError, UnicodeDecodeError):
+            raise ConfigurationError('Respons metadata pemilik Instagram tidak valid.') from None
+        if not isinstance(response, dict) or response.get('ok') is not True:
+            raise ConfigurationError('Pembacaan pemilik Instagram belum berhasil; kiriman ditahan.')
+        return from_metadata(canonical_url, response.get('metadata'))
 
     def source_path(self, value, job_id):
         if not isinstance(job_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}', job_id):
@@ -93,6 +166,17 @@ class Downloader:
                         raise DownloadUncertain('Manifest MCP partial ditahan; belum sah untuk publikasi/cleanup.')
                     if len(state.get("files", [])) != 1:
                         raise ValueError("Satu link harus menghasilkan satu video.")
+                    try:
+                        matching_source = normalize_url(state.get('url', '')) == normalize_url(job['url'])
+                    except ValueError:
+                        matching_source = False
+                    if state.get('job_id') != job_id or not matching_source:
+                        raise ConfigurationError('Manifest MCP tidak cocok dengan Reel sumber; pengiriman ditahan.')
                     path = self.source_path(state['files'][0]['path'], job_id)
+                    if job['payload'].get('source_attribution'):
+                        require_attribution(job)
+                        attribution = {key:job['payload'][key] for key in ('source_username', 'source_attribution')}
+                    else:
+                        attribution = await self.inspect_source(job['url'])
                     return {"source_path": str(path), "source_caption": state.get("caption") or "",
-                            'mcp_status': 'completed', 'mcp_job_id': job_id}
+                            'mcp_status': 'completed', 'mcp_job_id': job_id, **attribution}

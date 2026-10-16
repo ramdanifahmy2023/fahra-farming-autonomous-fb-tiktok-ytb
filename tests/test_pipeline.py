@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
+from fahra_automation.attribution import from_metadata
 from fahra_automation.config import Config, ConfigurationError
 from fahra_automation.db import Store
 from fahra_automation.downloader import DownloadUncertain
@@ -40,6 +41,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.probe = {'duration': 30, 'width': 1080, 'height': 1920, 'codec': 'h264', 'pixel_format': 'yuv420p',
                       'audio': True, 'audio_codec': 'aac', 'fps': 30, 'size': 2048}
         self.store.asset_checkpoint(self.asset_id, 'drive_ready', payload={
+            **from_metadata('https://www.instagram.com/reel/FIXTURE/', {'id': 'FIXTURE', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'}),
             'render_probe': self.probe, 'drive_url': 'https://drive.usercontent.google.com/download?id=fixturevideo',
             'generated': {'hook': 'Kucing penasaran', 'caption': 'Kucing melihat kardus.', 'hashtags': ['#kucing']}})
         async def metadata(job):
@@ -72,10 +74,23 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.drive.verify_delivery.await_count, 3)
         self.assertEqual(self.remote.check_account.await_count, 3)
         self.assertEqual(self.remote.create.await_count, 3)
+        for call in self.remote.create.await_args_list:
+            self.assertEqual(call.args[0]['description'].count('source: @fixture_creator'), 1)
         for job in self.rows():
             await self.pipeline.handle(job)
             self.assertEqual(self.journal.state(job['id'])['state'], 'accepted')
         self.assertEqual(self.remote.create.await_count, 3)
+
+    async def test_missing_source_credit_blocks_before_publication_intent(self):
+        self.store.asset_checkpoint(self.asset_id, payload={'source_attribution': None})
+        job = self.lease()
+        await self.pipeline.handle(job)
+        current = self.store.job(job['id'])
+        self.remote.create.assert_not_awaited()
+        self.assertIsNone(self.journal.state(current['id']))
+        self.assertEqual(current['attempts'], 0)
+        self.assertEqual(current['status'], 'drive_ready')
+        self.assertIn('username sumber', current['last_error'])
 
     async def test_snapshot_invalidated_at_each_await_prevents_any_intent(self):
         for hook in ('account', 'persona', 'drive'):

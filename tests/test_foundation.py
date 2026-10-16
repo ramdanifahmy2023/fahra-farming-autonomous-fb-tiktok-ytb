@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
+from fahra_automation.attribution import from_metadata
 from fahra_automation.config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID
 from fahra_automation.db import Store, AssetStore, ZONE
 from fahra_automation.pipeline import Pipeline
@@ -226,7 +227,8 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
             'scheduleAt': self.store.job(self.fb['id'] if sid == 'remote-fb' else self.yt['id'])['planned_at']})
         self.source = self.root / 'source.mp4'
         self.source.write_bytes(b'fixture source')
-        self.downloader = Mock(download=AsyncMock(return_value={'source_path': str(self.source), 'source_caption': 'Kucing'}))
+        self.attribution = from_metadata(self.fb['url'], {'id': 'abc', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'})
+        self.downloader = Mock(download=AsyncMock(return_value={'source_path': str(self.source), 'source_caption': 'Kucing', **self.attribution}))
         self.generated = {'hook': 'Kucing penasaran', 'caption': 'Matanya langsung melotot.', 'hashtags': ['#kucing']}
         self.analyzer = Mock(analyze=AsyncMock(return_value={'generated': self.generated}))
         self.media = Mock()
@@ -245,7 +247,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
                                  personas=self.personas, journal=Mock())
 
     def ready(self):
-        self.store.asset_checkpoint(self.fb['asset_id'], 'drive_ready', {'generated': self.generated, 'drive_url': 'https://drive.example/video', 'render_probe': {'duration': 10}})
+        self.store.asset_checkpoint(self.fb['asset_id'], 'drive_ready', {**self.attribution, 'generated': self.generated, 'drive_url': 'https://drive.example/video', 'render_probe': {'duration': 10}})
 
     async def test_one_download_render_and_drive_then_two_posts_and_share_links(self):
         for _ in range(6):
