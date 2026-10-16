@@ -451,6 +451,30 @@ class ReplyTest(unittest.IsolatedAsyncioTestCase):
         failed = self.worker.profiles.ensure_post.call_args_list[0].args[0]['id']
         self.assertIsNotNone(self.store.job(failed)['payload']['comment_profile_retry_at'])
 
+    async def test_profile_prioritizes_unconfigured_then_oldest_checked_without_starvation(self):
+        fixture_jobs = {}
+        for i in range(1, 8):
+            code = 'profile-order-' + str(i)
+            self.store.enqueue(1, 2, 200 + i, [('https://instagram.com/reel/' + code + '/', code)])
+            job = next(j for j in self.store.queue() if j['platform'] == 'tiktok' and self.store.job(j['id'])['source_id'] == code)
+            payload = {'post_id': 'post-' + job['id']}
+            if i == 2:
+                payload['comment_profile_retry_at'] = iso(now() + timedelta(hours=1))
+            else:
+                checked = now() if i == 1 else now() - timedelta(hours=i)
+                payload['comment_profile'] = {'verified': True, 'checked_at': iso(checked)}
+            self.store.checkpoint(job['id'], 'published', payload=payload)
+            fixture_jobs[i] = job['id']
+        await self.worker.profile_once()
+        called = [call.args[0]['id'] for call in self.worker.profiles.ensure_post.call_args_list]
+        self.assertEqual(called, [self.job_id, fixture_jobs[7], fixture_jobs[6], fixture_jobs[5], fixture_jobs[4]])
+        await self.worker.profile_once()
+        called = [call.args[0]['id'] for call in self.worker.profiles.ensure_post.call_args_list]
+        self.assertEqual(called[-1], fixture_jobs[3])
+        self.assertEqual(len(called), 6)
+        self.assertNotIn(fixture_jobs[1], called)
+        self.assertNotIn(fixture_jobs[2], called)
+
     async def test_six_frame_context_reused_across_three_deliveries_without_source_file(self):
         frames = []
         for i in range(6):

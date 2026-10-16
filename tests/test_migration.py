@@ -12,6 +12,7 @@ from fahra_automation.config import ConfigurationError
 from fahra_automation.db import Store, ZONE
 from fahra_automation.migration import import_snapshots, reconcile
 from fahra_automation.reply_store import ReplyStore
+from fahra_automation.personas import PersonaRegistry, DEFAULT_PROFILE
 from fahra_automation.scheduler import offset_for
 from fahra_automation.util import digest_file, iso
 
@@ -164,3 +165,55 @@ class MigrationTests(unittest.TestCase):
         self.store.enqueue(1,1,1,[('https://www.instagram.com/reel/new/','new')],can_allocate=False)
         with self.assertRaises(ConfigurationError):
             import_snapshots(self.store,self.root)
+
+    def doctor_pool(self):
+        accounts=self.accounts+[{'id':'doctor-only','type':'youtube','username':'preview','isConnected':True}]
+        schedule={'id':'doctor-external','accountId':'tiktok-account','type':'video','status':'pending',
+                  'title':'external','scheduleAt':iso(self.at+timedelta(hours=3))}
+        self.store.apply_snapshot(accounts,[schedule],self.at.date().isoformat(),(self.at.date()+timedelta(days=2)).isoformat())
+        return self.store.snapshot_generation()
+
+    def test_doctor_pool_is_replaced_atomically_and_persona_versions_survive(self):
+        generation=self.doctor_pool()
+        personas=PersonaRegistry(self.store)
+        personas.bind('tiktok-account','tiktok')
+        revised=personas.bind('tiktok-account','tiktok',{**DEFAULT_PROFILE,'instructions':'Gaya tenang.'})
+        report=import_snapshots(self.store,self.root)
+        self.assertEqual(report['jobs'],4)
+        self.assertEqual({a['id'] for a in self.store.accounts()},{a['id'] for a in self.accounts})
+        self.assertEqual(personas.bind('tiktok-account','tiktok'),revised)
+        with self.store.connect() as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM persona_versions').fetchone()[0],2)
+            self.assertEqual(c.execute('SELECT count(*) FROM external_schedules').fetchone()[0],0)
+        self.assertFalse(self.store.snapshot_fresh())
+        self.assertIsNone(self.store.get('repliz_synced_at'))
+        self.assertTrue(self.store.get('sync_in_progress'))
+        self.assertGreater(self.store.snapshot_generation(),generation)
+        with self.assertRaises(ConfigurationError):
+            self.store.apply_snapshot(self.accounts,[],self.at.date().isoformat(),self.at.date().isoformat(),
+                                      expected_generation=generation)
+
+    def test_asset_without_jobs_prevents_destructive_import(self):
+        self.doctor_pool()
+        with self.store.tx() as c:
+            c.execute('INSERT INTO assets(id,source_id,url,created_at,updated_at) VALUES(?,?,?,?,?)',
+                      ('orphan','orphan','https://www.instagram.com/reel/orphan/',iso(),iso()))
+        before=self.store.accounts()
+        with self.assertRaises(ConfigurationError):
+            import_snapshots(self.store,self.root)
+        self.assertEqual(self.store.accounts(),before)
+        self.assertIsNotNone(self.store.asset('orphan'))
+        self.assertTrue(self.store.snapshot_fresh())
+
+    def test_failed_import_restores_doctor_pool_and_snapshot_generation(self):
+        generation=self.doctor_pool()
+        before=self.store.accounts()
+        with patch('fahra_automation.migration.insert',side_effect=ValueError('fixture import failure')):
+            with self.assertRaisesRegex(ValueError,'fixture import failure'):
+                import_snapshots(self.store,self.root)
+        self.assertEqual(self.store.accounts(),before)
+        self.assertEqual(self.store.snapshot_generation(),generation)
+        self.assertTrue(self.store.snapshot_fresh())
+        with self.store.connect() as c:
+            self.assertEqual(c.execute('SELECT id FROM external_schedules').fetchone()[0],'doctor-external')
+            self.assertEqual(c.execute('SELECT count(*) FROM jobs').fetchone()[0],0)

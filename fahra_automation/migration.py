@@ -66,8 +66,8 @@ def import_snapshots(store, folder):
             return store.get('migration_report')
         raise ConfigurationError('Target sudah berisi migrasi lain; gunakan database staging kosong.')
     with store.connect() as connection:
-        if connection.execute('SELECT count(*) FROM jobs').fetchone()[0]:
-            raise ConfigurationError('Importer memerlukan database baru tanpa pekerjaan.')
+        if connection.execute('SELECT EXISTS(SELECT 1 FROM jobs) OR EXISTS(SELECT 1 FROM assets)').fetchone()[0]:
+            raise ConfigurationError('Importer memerlukan database baru tanpa pekerjaan atau aset.')
     ReplyStore(store)
     loaded = []
     for source in manifest['sources']:
@@ -83,6 +83,16 @@ def import_snapshots(store, folder):
     report = {'id': manifest['id'], 'at': iso(), 'final': manifest.get('final', False), 'sources': [], 'jobs': 0, 'assets': 0,
               'reply_events': 0, 'held_outbox': 0}
     with store.tx() as connection:
+        if connection.execute('SELECT EXISTS(SELECT 1 FROM jobs) OR EXISTS(SELECT 1 FROM assets)').fetchone()[0]:
+            raise ConfigurationError('Target berubah saat snapshot dibaca; pekerjaan atau aset sudah tersedia.')
+        # Doctor may have populated this pool; only the complete legacy import may replace it.
+        connection.execute('DELETE FROM external_schedules')
+        connection.execute('DELETE FROM accounts')
+        store.put_setting(connection,'repliz_synced_at',None)
+        store.put_setting(connection,'sync_in_progress',True)
+        store.put_setting(connection,'snapshot_generation',store.setting(connection,'snapshot_generation',0)+1)
+        store.put_setting(connection,'snapshot_from_day','')
+        store.put_setting(connection,'snapshot_to_day','')
         connection.execute('CREATE TABLE IF NOT EXISTS legacy_mapping(origin TEXT,kind TEXT,legacy_id TEXT,new_id TEXT,PRIMARY KEY(origin,kind,legacy_id))')
         account_offset, batch_number = 0, 0
         for source, data in loaded:

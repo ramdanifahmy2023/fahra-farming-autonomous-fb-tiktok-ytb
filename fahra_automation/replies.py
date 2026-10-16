@@ -373,7 +373,9 @@ class ReplyWorker:
         await self.inventory()
         with self.store.connect() as c:
             rows = c.execute("""SELECT id FROM jobs WHERE status='published'
-                AND json_extract(payload,'$.post_id') IS NOT NULL ORDER BY updated_at DESC""").fetchall()
+                AND json_extract(payload,'$.post_id') IS NOT NULL
+                ORDER BY json_extract(payload,'$.comment_profile.checked_at') IS NOT NULL,
+                    julianday(json_extract(payload,'$.comment_profile.checked_at')),created_at,id""").fetchall()
         count = 0
         batch_limit = max(1, min(20, self.config.section('reply').get('profile_batch_size', 5)))
         for row in rows:

@@ -14,7 +14,7 @@ Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. 
 
 ## Migrasi dan aktivasi
 
-`migrate snapshot` membuat snapshot konsisten kedua sumber ke runtime/migrations/rehearsal-… . `migrate import FOLDER --staging` mengimpor ke runtime/migration-staging/workflow.sqlite3. Jangan mengimpor rehearsal ke database produksi yang akan menerima input.
+`migrate snapshot` membuat snapshot konsisten kedua sumber ke runtime/migrations/rehearsal-… . `migrate import FOLDER --staging` mengimpor ke runtime/migration-staging/workflow.sqlite3. `migrate reconcile --staging` menguji snapshot remote untuk rehearsal; ready tetap false karena belum snapshot final. Jangan mengimpor rehearsal ke database produksi yang akan menerima input.
 
 Sesudah rehearsal/preview lulus, hentikan dua LaunchAgent lama dan buktikan lock bebas. `migrate snapshot --final` mengambil snapshot baru; `migrate import FOLDER` mengisi database baru yang kosong. Import idempotent untuk manifest sama dan menolak target berisi pekerjaan/migrasi berbeda. `migrate reconcile` mengambil snapshot remote lengkap, menjaga slot lama/unknown, memeriksa journal, lalu mencatat kelayakan ownership. `migrate activate` menolak jika tahap tersebut belum siap atau layanan lama masih loaded.
 

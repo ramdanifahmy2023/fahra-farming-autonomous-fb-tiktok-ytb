@@ -271,6 +271,10 @@ def main():
         config = Config.load(args.root)
         store = initialize(config)
         if args.command == 'migrate':
+            if args.staging and args.action not in {'import','reconcile'}:
+                raise ValueError('--staging hanya untuk import atau reconcile, bukan aktivasi.')
+            if args.final and args.action != 'snapshot':
+                raise ValueError('--final hanya untuk snapshot.')
             from . import migration
             from .ownership import activate
             if args.action == 'snapshot':
@@ -281,10 +285,11 @@ def main():
                 target = Store(config.runtime / 'migration-staging' / 'workflow.sqlite3') if args.staging else store
                 output(migration.import_snapshots(target,args.folder))
             elif args.action == 'reconcile':
+                target = Store(config.runtime / 'migration-staging' / 'workflow.sqlite3') if args.staging else store
                 async def reconcile_migration():
                     api = Repliz(config)
                     try:
-                        output(await migration.reconcile(config,store,api))
+                        output(await migration.reconcile(config,target,api))
                     finally:
                         await api.close()
                 asyncio.run(reconcile_migration())
