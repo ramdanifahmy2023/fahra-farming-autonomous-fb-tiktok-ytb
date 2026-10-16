@@ -12,6 +12,8 @@ Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. 
 
 `service status|stop|restart`, `status`, `accounts`, `events --limit 50`, `reply status|pause|resume`, `backup`, `cleanup --status` tersedia. `cleanup` tanpa opsi hanya rencana; `cleanup --apply` memeriksa ulang bukti sebelum menghapus file yang memenuhi syarat.
 
+Untuk restart terencana, pause reply dahulu, buat backup, lalu stop/deploy/start layanan. Periksa snapshot akun sudah lengkap setelah startup sebelum `reply resume`. Worker juga menahan proses ketika snapshot sedang diperbarui atau generation berubah, tanpa menghabiskan failure budget draft. Jangan mengubah status unknown menjadi queued/drafted untuk melewati penantian.
+
 ## Migrasi dan aktivasi
 
 `migrate snapshot` membuat snapshot konsisten kedua sumber ke runtime/migrations/rehearsal-… . `migrate import FOLDER --staging` mengimpor ke runtime/migration-staging/workflow.sqlite3. `migrate reconcile --staging` menguji snapshot remote untuk rehearsal; ready tetap false karena belum snapshot final. Jangan mengimpor rehearsal ke database produksi yang akan menerima input.
