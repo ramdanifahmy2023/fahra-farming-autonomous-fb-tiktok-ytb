@@ -25,3 +25,24 @@ Hal yang belum dilakukan: implementasi schema/worker/adapter/persona/komentar, p
 Review tambahan memperjelas bahwa tiga tujuan hanya berlaku untuk input baru, sementara histori/pending legacy mempertahankan tujuan aslinya tanpa backfill. Kuota 20 tidak menggulirkan kiriman ke besok bila akun lain pada platform yang sama masih memiliki slot. MCP start yang ambigu boleh ditahan untuk pemulihan; rencana tidak menjamin komputasi selalu tepat satu kali. Hook video dipakai bersama, sedangkan persona caption publik mengikuti akun tujuan dan disiapkan ulang jika akun dialihkan sebelum intent. Input publik dan kendali admin dari keputusan lama dipertahankan dalam rancangan.
 
 Pemeriksa dokumen lulus pada working copy dan index dengan nilai credential aktual, tanpa temuan. Lima kontrol pada repo fixture sementara juga lulus: dokumen bersih diterima, rahasia yang hanya tersisa di index ditolak, Credential yang dipaksa tracked ditolak, tautan lokal rusak ditolak, dan dokumen wajib yang hilang ditolak. Fixture memakai nilai buatan, tidak menyentuh data produksi. Ini pengujian pemeriksa dokumen, bukan aplikasi workflow. Referensi SHA action GitHub dibandingkan dengan workflow lama yang telah berjalan dan disalin tepat sebelum push.
+
+## 16 Oktober 2026: implementasi paket tiga platform
+
+Permintaan: pengguna menyetujui implementasi seluruh rencana, batas20 video/akun/hari, onboarding akun baru otomatis, mengganti dua workflow lama sesudah lulus. Link pilot baru dipilih pengguna: DaLK4M_JU9W.
+
+Branch `work/20261016-implementation`, base `65e5e14f259a29f553d42446b80a3713b3a92bd6`, worktree `/Volumes/DATA KERJA /Project Dev/worktrees/fahra-farming-autonomous-fb-tiktok-ytb/20261016-implementation`. Source lama digunakan sebagai dasar dengan namespace baru; runtime/DB aktif tidak disalin ke worktree.
+
+Perubahan utama:
+
+- `fahra_automation/db.py`, `scheduler.py`, `repliz.py`, `pipeline.py`: asset bersama/tujuan wajib, tiga platform, quota20, rotasi persisten, akunbaru/disconnect/reconnect, snapshot lengkap atomik, tanggal remote, lease asset, jadwal08–23, horizon media24jam, limiter/cooldown, dan pengiriman mandiri tiap platform.
+- `journal.py`, `ownership.py`, `migration.py`: intent durable di luar backup SQLite, restore tanpa POST ulang, kepemilikan tunggal, snapshot SQLite API, import tujuan asli/cursor/event/konteks/reply tanpa backfill atau offset bot lama.
+- `drive.py`, `downloader.py`, `media.py`: manifest Drive lengkap/full checksum sebelum setiap POST, Desktop-only, MCP start ambigu ditahan, validasi9:16/3–90detik/H264AAC dan edit pilihan pengguna.
+- `personas.py`, caption/reply/profile: persona versi per akun, metadata per tujuan, konteks enam frame/transkrip/induk, GenZ sesuai fakta, native reply dipisahkan dari custom, like hanyaTT/FB, moderasi keyword, unknown tidak diulang.
+- Telegram: satu kartu progres dengan tiga tujuan, tautan hasil, isolasi callback400/outbox chat rusak, retry durable, kontrol admin dan privasi batch, batas backlog/disk. Cleanup membaca tujuan wajib dan referensi ketiga workspace.
+- Config baru mengenali label9Router hyphen, tokenbaru, Drive linkfile, shadow default. Verifier full dan CI menguji source/rahasia/dokumen/seluruh suite tanpa jaringan aplikasi.
+
+Pemeriksaan sementara: suite offline lengkap lulus; jumlah akhir dan laporan exact commit disimpan di runtime/verification saat penutupan. Preview nyata DaLK4M_JU9W selesai tanpa publikasi: asset22a9e8ec87ac4214abeed2ca8f59ec07, video17.068detik720×1280/30fps/H264AAC,12,535,884byte. SHA256 lokal/Drive `4e22ef9ad02832ca24492115b19adf46cf1dc3b36f4a174efbfc23f1c412af71`. Model aktual gpt-6.1-sol, caption policy id-natural-v3, dua upaya review, confidence0.88. Hook terlihat pada frame1detik dan hilang pada3.2detik. Previewfile berada di runtime worktree; bukti akan diarsipkan sebelum worktree dibersihkan.
+
+Pada commit implementasi ini, cutover/publikasi/komentar nyata belum menjadi bukti selesai. Hasil CI, migrasi final, aktivasi, dan pilot dicatat setelah dilakukan. Jangan menyamakan fixture/profile tersimpan dengan komentar nyata atau video terbit.
+
+Pemeriksaan sebelum push: **254/254 tes offline lulus tanpa skip**, verifier full (source/index, rahasia aktual, sintaks, tautan, diff) PASS. Preview persona nyata untuk tiga akun fixture dan draft reply memakai enam frame PASS; model aktual gpt-6.1-sol. Pemeriksaan `Drive.verify_delivery` nyata juga PASS pada hierarki folder, hash Bank, dan seluruh hash remote. Bukti: runtime/verification/implementation-ai-preview/report.json dan implementation-drive-preflight.json. Review akhir memperbaiki restore akun/tanggal remote, startup kedua sebelum lock, callback nonblocking/race halaman, lock cleaner bersama proyek lama, serta kewajiban live ownership sebelum cleanup. Aktivasi masih menunggu CI/migrasi/pilot; angka tes ini bukan klaim posting/komentar nyata.

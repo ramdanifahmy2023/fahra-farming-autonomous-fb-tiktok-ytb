@@ -1,0 +1,30 @@
+{
+  "name": "Peternakan akun | TikTok ID | Like + Moderasi v1",
+  "version": 1,
+  "description": "Like komentar baru dan sembunyikan komentar yang mengandung frasa pada daftar. Aturan keyword memakai substring, tidak memahami konteks atau seluruh kebijakan TikTok.",
+  "categories": {
+    "spam_judi": [
+      "slot gacor", "situs slot", "link slot", "daftar slot", "slot online",
+      "judi online", "situs judi", "link judi", "daftar judi", "promosi judol",
+      "casino online", "kasino online", "togel online", "bandar togel", "bonus deposit",
+      "deposit pulsa", "deposit receh", "maxwin hari ini", "rtp live", "pola gacor"
+    ],
+    "spam_penipuan": [
+      "jual followers", "jasa followers", "followers gratis", "free followers",
+      "jual akun tiktok", "kirim kode otp", "minta kode otp", "kirim pin atm",
+      "transfer biaya admin", "klaim hadiah di", "klaim hadiah lewat", "klik link hadiah",
+      "investasi pasti untung", "profit dijamin", "pengganda uang", "jasa hack akun"
+    ],
+    "pelecehan_seksual": [
+      "open bo", "jasa vcs", "vcs murah", "video bokep", "link bokep", "jual bokep",
+      "kirim foto telanjang", "kirim pap telanjang", "pap payudara", "pap memek",
+      "pap kontol", "mau perkosa", "akan perkosa", "pengen perkosa"
+    ],
+    "ancaman_kebencian": [
+      "akan kubunuh", "bakal kubunuh", "gw bunuh lu", "gue bunuh lo", "saya bunuh kamu",
+      "bunuh semua muslim", "bunuh semua kristen", "bunuh semua yahudi",
+      "bunuh semua hindu", "bunuh semua buddha", "musnahkan semua muslim",
+      "musnahkan semua kristen", "musnahkan semua yahudi"
+    ]
+  }
+}

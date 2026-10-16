@@ -2,7 +2,7 @@
 
 Root proyek: `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader`. Nama volume DATA KERJA memiliki spasi di akhir; kutip seluruh path.
 
-## Yang tersedia sekarang
+## Akses yang diaudit sebelum implementasi
 
 | Komponen | Lokasi atau identitas | Bukti audit 16 Oktober 2026 |
 | --- | --- | --- |
@@ -31,12 +31,24 @@ Pemeriksa hanya membaca dokumen/source dan index, memeriksa tautan lokal, sintak
 
 Git origin memakai HTTPS dan helper `gh auth git-credential` lokal repo. Jangan menyimpan token pada URL. Push awal sempat gagal melalui default SSH; HTTPS memperbaiki akses tanpa mengganti credential pengguna. GitHub visibility harus tetap private.
 
-## Perangkat yang akan dipakai implementasi
+## Paket dan operasi
 
-Python 3.14, SQLite dengan migrasi schema, httpx/MCP SDK, Docker FFmpeg, host ffprobe/FFmpeg dan Whisper lokal, Drive Desktop, serta Repliz. Paket Python baru diusulkan bernama `fahra_automation` agar tidak berbenturan dengan dua instalasi peternakan. Dependency dan versi image/model perlu dikunci saat fase fondasi, bukan diasumsikan tersedia dari venv lama.
+Paket Python `fahra_automation`, Python 3.14, SQLite schema v1. Dependency dikunci pada requirements.lock. LaunchAgent `id.fahra.automation.social`; database runtime/workflow.sqlite3. Petunjuk perintah, cutover, dan pemulihan ada di [OPERATIONS.md](docs/OPERATIONS.md).
 
-CLI yang diusulkan: doctor, status, accounts, sync, preview, run, backup, migrate, cleanup, service, serta pengaturan persona/automasi. Semua nama ini masih kontrak rencana; belum boleh dijalankan atau dilaporkan sebagai fitur aktif. LaunchAgent usulan `id.fahra.automation.social`, DB runtime/workflow.sqlite3 dan backup internal khusus paket baru akan dibuat pada fase implementasi.
+```sh
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock
+.venv/bin/python -m pip install --no-deps -e .
+./scripts/verify.sh --mode full --base origin/main --secrets-from '/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader/Credential'
+.venv/bin/python -m fahra_automation doctor
+.venv/bin/python -m fahra_automation status
+.venv/bin/python -m fahra_automation events --limit 20
+```
 
-## Batas akses proyek lama
+Verifier full memeriksa working tree/index, pola dan nilai rahasia, sintaks Python/JSON/TOML/shell, tautan Markdown, diff, lalu seluruh tes offline. CI tidak memiliki credential atau deployment. Artefak lokal disimpan di runtime/verification/; nilai rahasia tidak dicetak. Pemeriksa rencana di bagian sebelumnya hanya untuk arsip dokumen.
 
-Referensi TikTok: `/Volumes/DATA KERJA /Project Dev/Peternakan-akun`. Referensi FB/YT: `/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb`. Audit memakai source dan SQLite read-only; tidak menjalankan polling kedua, mengubah config, restart, atau memindahkan antreannya. Migrasi mengikuti [MIGRATION.md](docs/MIGRATION.md), dengan SQLite backup API dan bukti rekonsiliasi remote. Data aktif tidak disalin mentah ke worktree.
+Backup database melalui API SQLite ke `~/Library/Application Support/FahraAutomation/backups`. Attempt journal terpisah di `~/Library/Application Support/FahraAutomation/attempts`; **backup database saja tidak cukup untuk restore**. Worktree/fixture otomatis memakai journal runtime sendiri. Jangan menghapus journal untuk memperbaiki antrean macet.
+
+## Referensi lama dan kepemilikan
+
+TikTok lama: `/Volumes/DATA KERJA /Project Dev/Peternakan-akun`, label `id.fahra.peternakan`. FB/YT lama: `/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb`, label `id.fahra.peternakan.fb-ytb`. Migrasi mengikuti [MIGRATION.md](docs/MIGRATION.md), SQLite backup API, checksum, dan rekonsiliasi remote. Data aktif tidak disalin mentah ke worktree. Worker baru menahan lock kedua root lama selama hidup; setiap mutasi Repliz juga memeriksa ownership dan status kedua LaunchAgent lama.

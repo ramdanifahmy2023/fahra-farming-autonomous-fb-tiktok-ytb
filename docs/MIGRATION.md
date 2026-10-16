@@ -1,6 +1,6 @@
 # Mengganti dua workflow lama
 
-Keputusan pengguna: paket baru menggantikan TikTok dan FB/YT lama setelah uji lulus. Ini runbook rencana, belum dieksekusi. Sekarang dua LaunchAgent lama tetap berjalan, bot baru belum dipolling, dan Repliz automation tidak diubah.
+Keputusan pengguna: paket baru menggantikan TikTok dan FB/YT lama setelah uji lulus. Runbook ini menjadi urutan implementasi yang disetujui pada 16 Oktober. Status pelaksanaan ada di memory/worklog dan bukti runtime; jangan menganggap langkah di bawah sudah dijalankan hanya karena kode tersedia.
 
 ## Batas yang harus dipertahankan
 
@@ -15,12 +15,12 @@ Tiga tujuan berlaku untuk input baru. Asset/pending legacy mempertahankan requir
 1. **Inventaris read-only.** Rekam source commit, DB schema, akun/platform, seluruh job/asset/status/slot, remote schedule/post ID, reply pending/unknown, cutoff, context, native account/post overrides, serta semua lokasi media yang masih dirujuk. Cocokkan jadwal remote berhalaman lengkap. Stop pada snapshot ambigu; jangan menganggap kosong.
 2. **Simulasi import.** Buat snapshot konsisten dengan SQLite backup API, bukan copy file aktif. Rehearsal berada di runtime staging terlindungi pada checkout baru yang hak kirimnya nonaktif; worktree pengembangan tetap memakai fixture. Import ke DB baru dengan schema version dan mapping `(workflow_asal, legacy_id)`. Jangan menautkan runtime atau menulis DB lama.
 3. **Validasi tanpa kirim.** Bandingkan jumlah dan hash record penting, pemakaian kuota per akun/hari, mapping post/context/reply, source/render/bank paths, serta seluruh status unknown. Jalankan shadow scheduler/reconciler yang hanya membaca remote dan menghasilkan usulan. Semua mutation endpoint ditolak oleh mode ini, bukan sekadar janji operator.
-4. **Bekukan penerimaan dan owner lama.** Pada tahap cutover yang dijalankan, hentikan intake serta pembentukan intent baru kedua workflow. Tunggu operasi yang bisa selesai; untuk request yang tidak pasti, rekam sebagai unknown dan rekonsiliasi. Matikan dua LaunchAgent lama dan verifikasi proses/lease polling serta worker lama benar-benar berhenti. Ambil snapshot final yang konsisten; rehearsal sebelumnya bukan data cutover final.
+4. **Bekukan penerimaan dan owner lama.** Pada tahap cutover yang dijalankan, hentikan intake serta pembentukan intent baru kedua workflow. Tunggu operasi yang bisa selesai; untuk request yang tidak pasti, rekam sebagai unknown dan rekonsiliasi. Bootout dan disable persisten dua LaunchAgent lama agar tidak bangun kembali saat login, lalu verifikasi proses/lease polling serta worker lama benar-benar berhenti. Ambil snapshot final yang konsisten; rehearsal sebelumnya bukan data cutover final.
 5. **Import final dan ambil ownership.** Ulang import/delta dengan checksum, rekonsiliasi remote, lalu peroleh lock dan generation pemilik akun paket baru. DB baru tetap menahan submit_unknown/send_unknown yang belum terjawab. Jangan menghapus marker atau membuat jadwal pengganti. Audit remote native reply sebelum memilih custom owner; perubahan profil harus mempertahankan modul lain dan didukung snapshot/diff.
 6. **Aktifkan pilot terkendali.** Mulai satu polling bot baru. Cakupan kirim awal dibatasi pilot satu akun eligible per platform, tetap memperhitungkan kuota lama. Gunakan satu link pengguna untuk membuktikan tiga hasil publik dan notifikasi. Konfigurasi komentar yang belum terbukti tetap menunggu capability/pilot; tidak membuat klaim semua platform mendukung aksi identik.
 7. **Perluas dan observasi.** Setelah pilot dan tes pemulihan lulus, perluas eligible pool otomatis. Akun tambahan berikutnya mengikuti registry otomatis, tanpa perlu mendaftarkan manual. Simpan laporan health, quota, ownership, dan hasil rekonsiliasi. Daftar root cleanup mencakup ketiga workspace/arsip selama ada referensi lama.
 
-Waktu mulai pilot/cutover belum ditetapkan. Tidak ada kebutuhan approval manual berulang per video setelah layanan selesai diaktifkan. Audit/plan saat ini tidak merupakan pelaksanaan fase ini.
+Pilot memakai link baru yang dipilih pengguna. Tidak ada approval manual berulang per video. Eksekusi aktual tetap dicatat dengan hasil verifikasi dan status kepemilikan.
 
 ## Data yang ikut dan yang dipisahkan
 

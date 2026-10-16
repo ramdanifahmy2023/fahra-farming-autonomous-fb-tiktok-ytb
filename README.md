@@ -1,19 +1,16 @@
-# Fahra Automation TikTok, Facebook, dan YouTube
+# Fahra Automation
 
-Status 16 Oktober 2026: audit dan rencana implementasi. Paket layanan belum dibuat atau diaktifkan.
+Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit, lalu dibuat caption sesuai persona akun dan dijadwalkan ke satu TikTok, satu Facebook Page, dan satu YouTube Shorts. Bot melaporkan progres serta tautan ketika setiap tujuan benar-benar terbit.
 
-Tujuan: satu link Reel Instagram menghasilkan satu video untuk satu akun TikTok, satu Facebook Page, dan satu channel YouTube Shorts. Kuota yang dipilih pengguna adalah maksimal 20 video per akun per hari WIB. Paket baru akan menggantikan dua workflow lama setelah pengujian lulus.
+- Maksimal **20 video per akun per hari WIB**. Rotasi bertahan antarbatch/restart; akun baru ikut otomatis setelah snapshot lengkap. Akun terputus dilewati.
+- Satu asset, tiga antrean mandiri. YouTube penuh tidak mengulang TikTok/FB yang sudah berhasil.
+- Mirror, zoom 110%, hook Indonesia tiga detik pertama, audio asli. Format bersama 9:16, 3–90 detik, H.264/AAC.
+- Bank konten disinkronkan Drive Desktop. Seluruh checksum diverifikasi lagi sebelum setiap pengiriman.
+- Persona Indonesia Gen Z, caption/hashtag berdasarkan isi video; balasan memakai konteks video dan komentar induk. Like/moderasi mengikuti kemampuan platform; YouTube tidak diberi like komentar.
+- File kerja dibersihkan paling cepat 24 jam setelah semua tujuan wajib terbit. Bank, Drive, konteks, frame, dan histori tetap disimpan.
 
-Satu paket berarti satu bot, satu model antrean, satu registry akun/persona, dan satu layanan pengendali. Downloader MCP dan Drive Desktop yang sudah tersedia tetap menjadi dependensi eksternal; ini belum merupakan installer mandiri.
+TikTok **iq7fanspage** selalu dikecualikan. Paket ini menggantikan kedua workflow lama setelah verifikasi dan cutover; konfigurasi bawaan tetap `shadow` sampai kepemilikan diberikan.
 
-Akun baru pada ketiga platform otomatis ikut rotasi setelah snapshot akun dan kuotanya lengkap. Akun putus dilewati tanpa menghapus histori. Akun TikTok iq7fanspage tetap dikecualikan.
+Mulai dari [tools.md](tools.md) dan [operasi](docs/OPERATIONS.md). Keputusan tetap ada di [AGENTS.md](AGENTS.md), status/bukti di [memory.md](memory.md) dan [worklog.md](worklog.md). Rancangan dan matriks uji: [PLAN.md](docs/PLAN.md), [ACCEPTANCE.md](docs/ACCEPTANCE.md), [MIGRATION.md](docs/MIGRATION.md).
 
-Mulai membaca dari [rencana implementasi](docs/PLAN.md), kemudian [audit dan bukti](docs/AUDIT.md). Dokumen pendukung:
-
-- [Kemampuan per platform](docs/PLATFORM_CAPABILITIES.md), termasuk batas native automation dan 9Router.
-- [Tes penerimaan](docs/ACCEPTANCE.md) dan [migrasi dua workflow lama](docs/MIGRATION.md).
-- [Aturan agent](AGENTS.md), [tools dan akses](tools.md), [keputusan tersimpan](memory.md), [jejak kerja](worklog.md).
-
-Pemeriksaan dokumen lokal: `python3 scripts/verify_plan.py`. CI hanya memeriksa paket rencana ini, bukan menguji worker publikasi yang belum dibuat.
-
-Credential dan bank konten lokal sudah disiapkan pengguna dan diabaikan Git. Tidak ada token, database produksi, atau video di repo. Layanan lama tetap beroperasi; paket ini belum menjalankan polling, membuat jadwal, atau mengubah automasi akun.
+Credential, runtime, media, dan konfigurasi mesin tidak masuk Git. Repo harus tetap private.

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fahra-automation"
+version = "0.1.0"
+description = "Telegram to TikTok, Facebook Reels and YouTube Shorts with contextual automation"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.28,<1",
+  "mcp>=1.20,<2",
+  "google-api-python-client>=2.170,<3",
+  "google-auth-oauthlib>=1.2,<2",
+]
+
+[project.scripts]
+fahra-automation = "fahra_automation.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fahra_automation*"]

@@ -1,0 +1,43 @@
+# Menjalankan dan merawat paket
+
+Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. `config.example.toml` berisi default aman; penyesuaian mesin pada config.local.toml yang diabaikan Git. Jangan mencetak credential. Baca status/worklog terbaru sebelum mengubah layanan.
+
+## Urutan normal
+
+1. `init`, lalu `doctor`. Doctor membaca bot/Repliz/AI/Drive/MCP tanpa membuat posting. `sync` memperbarui snapshot akun dan jadwal lengkap secara atomik.
+2. `preview URL --sync-drive` membuktikan download, AI, render, dan checksum Drive di runtime/previews. Preview tidak memanggil create schedule. Frame, transkrip, review caption, dan report.json menjadi bukti.
+3. Jalankan verifier full dan CI pada commit tugas. Media/AI/Drive membutuhkan preview selain fixture.
+4. Setelah migrasi final dan rekonsiliasi, `migrate activate` membuat ownership. Aktifkan mode live, publish_enabled, cleanup.enabled pada config.local.toml. Buka pause setelah pilot siap; resume reply lewat CLI setelah pilot terverifikasi. Sakelar reply disimpan di SQLite melalui `reply pause|resume`, bukan pada konfigurasi.
+5. `service install`, `service start`. Jangan menjalankan `run` terpisah saat LaunchAgent hidup. Service baru mengambil lock kedua workflow lama dan menolak mutasi jika salah satu LaunchAgent lama dimuat kembali.
+
+`service status|stop|restart`, `status`, `accounts`, `events --limit 50`, `reply status|pause|resume`, `backup`, `cleanup --status` tersedia. `cleanup` tanpa opsi hanya rencana; `cleanup --apply` memeriksa ulang bukti sebelum menghapus file yang memenuhi syarat.
+
+## Migrasi dan aktivasi
+
+`migrate snapshot` membuat snapshot konsisten kedua sumber ke runtime/migrations/rehearsal-… . `migrate import FOLDER --staging` mengimpor ke runtime/migration-staging/workflow.sqlite3. Jangan mengimpor rehearsal ke database produksi yang akan menerima input.
+
+Sesudah rehearsal/preview lulus, hentikan dua LaunchAgent lama dan buktikan lock bebas. `migrate snapshot --final` mengambil snapshot baru; `migrate import FOLDER` mengisi database baru yang kosong. Import idempotent untuk manifest sama dan menolak target berisi pekerjaan/migrasi berbeda. `migrate reconcile` mengambil snapshot remote lengkap, menjaga slot lama/unknown, memeriksa journal, lalu mencatat kelayakan ownership. `migrate activate` menolak jika tahap tersebut belum siap atau layanan lama masih loaded.
+
+Importer mempertahankan ID job/schedule/post, payload/path media, status/quota, tujuan asli, cursor, event, konteks dan dedupe reply. Asset sumber sama dari dua arsip memakai namespace terpisah sehingga hasil render lama tidak saling menimpa. Mengirim ulang URL lama tidak menambah tujuan baru. Sumber tidak diubah. Offset Telegram lama tidak disalin. Batch lama memiliki chat netral; outbox lama ditahan pada snapshot dengan jumlah tercatat, bukan dikirim menggunakan bot baru ke penerima yang belum terpetakan.
+
+Aktivasi pilot memakai satu Reel baru pilihan pengguna. Batasi akun pilot per platform melalui snapshot eligible yang sudah diuji; perluasan setelah bukti pilot. Simpan tiga URL terbit, ID jadwal/post, checksum Drive, notifikasi, serta status automasi yang dibaca ulang. Posting YouTube dengan spesifikasi Shorts tetap perlu bukti hasil publik; jadwal diterima saja belum cukup.
+
+## Penjadwalan dan ruang kerja
+
+Default 08:00 sampai sebelum 23:00 WIB, 20 slot tersebar dengan offset akun stabil. Snapshot remote mencakup jadwal eksternal dan perpindahan tanggal. Slot lokal yang sudah memiliki remote ID dihitung sekali. Saat quota/HTTP429, akun ditunda dan worker menghormati retry; jumlah 20 adalah batas lokal, bukan jaminan provider.
+
+Input publik maksimum100 link/pesan, backlog1000 asset, minimal10GiB ruang bebas. Download/render dibatasi horizon24jam. Pengirim mendapat alasan bila link belum diterima; admin dapat melihat detail error. Progres menampilkan tahap bersama dan status masing-masing tujuan, dengan tombol tautan hasil publik. Callback kedaluwarsa atau satu chat tidak terjangkau tidak menghalangi kiriman chat lain.
+
+## Persona dan komentar
+
+Registry persona dibuat otomatis per akun terhubung, setiap perubahan menyimpan versi immutable. Caption delivery menyimpan versi persona/model dan evidence; hook bersama tidak berubah per tujuan. Reply menggunakan konteks enam frame/transkrip, identitas posting, komentar, dan komentar induk. Induk belum ditemukan, fakta lemah, atau balasan sudah ada masuk hold/review. Kuota reply20/akun/hari terpisah dari video.
+
+Worker lokal menjadi pemilik reply pada posting yang dikelola. Profil native per posting mempertahankan seluruh konfigurasi efektif, mematikan native reply untuk mencegah balasan ganda, mengaktifkan like hanya TT/FB, serta moderasi keyword. Worker profil merekonsiliasi timeout lewat GET sebelum retry. Aksi yang statusnya tidak pasti tidak dikirim ulang. Konfigurasi tersimpan bukan bukti komentar nyata telah dibalas/ditangani.
+
+## Restore dan rollback
+
+Hentikan service sebelum mengganti DB. Simpan DB melalui `backup` dan seluruh attempt journal, ownership, serta manifest migrasi di penyimpanan internal. Journal dibuat sebelum intent SQLite/POST dan difsync; response remote dicatat sebelum status DB. Saat restore, startup memulihkan intent menjadi submit_unknown atau schedule ID diterima. Attempt tanpa job menahan semua mutasi sampai mapping dipulihkan. Journal reply/download/profil juga mencegah pengulangan setelah DB tertinggal.
+
+Jangan menghapus journal, ID remote, counts_quota, atau status unknown agar job bisa dikirim lagi. Reconcile dahulu. Jangan menghidupkan bot lama dengan snapshot pra-cutover setelah bot baru mengirim; delta schedule/reply dan kuota harus dipetakan balik sebelum ownership dipindahkan. Jika rollback belum dapat dibuktikan aman, tahan kedua pengirim dan biarkan jadwal remote yang sudah ada dipantau.
+
+Cleanup hanya file kerja yang memiliki bukti semua tujuan wajib published, waktu publikasi terakhir+24jam, checksum Bank/Drive lengkap, enam frame, manifest MCP completed, dan tidak ada referensi lain. Ketiga workspace termasuk preview/arsip diperiksa. Arsip legacy di luar batas runtime baru tetap dilindungi; jangan menghapusnya manual untuk merapikan.

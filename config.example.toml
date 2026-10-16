@@ -1,0 +1,77 @@
+[workflow]
+project = "fahra-automation"
+timezone = "Asia/Jakarta"
+daily_limit = 20
+mode = "shadow"
+publish_enabled = false
+window_start = 8
+window_end = 23
+schedule_lead_seconds = 60
+max_attempts = 4
+sync_interval_seconds = 300
+max_batch_links = 100
+max_pending_assets = 1000
+render_horizon_hours = 24
+min_free_disk_gb = 10
+runtime_dir = "runtime"
+backup_dir = "~/Library/Application Support/FahraAutomation/backups"
+journal_dir = "~/Library/Application Support/FahraAutomation/attempts"
+backup_interval_seconds = 3600
+legacy_roots = ["/Volumes/DATA KERJA /Project Dev/Peternakan-akun", "/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb"]
+legacy_labels = ["id.fahra.peternakan", "id.fahra.peternakan.fb-ytb"]
+
+[cleanup]
+enabled = false
+retention_hours = 24
+interval_seconds = 3600
+peer_roots = ["/Volumes/DATA KERJA /Project Dev/Peternakan-akun", "/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb"]
+
+[telegram]
+token_file = "Credential/token-bot-telegram.md"
+allowed_user_ids = [265732518]
+public_ingest = true
+forbidden_token_files = ["/Volumes/DATA KERJA /Project Dev/Peternakan-akun/Credential/token_bot_telegram.md", "/Volumes/DATA KERJA /Project Dev/Peternakan-fb-ytb/Credential/token_bot_telegram.md"]
+
+[repliz]
+credentials_file = "Credential/repliz.md"
+base_url = "https://api.repliz.com"
+
+[downloader]
+project_dir = "/Users/fahra/Projects/instagram-downloader-mcp"
+container = "youtube-downloader-telegram-downloader-1"
+docker = "/usr/local/bin/docker"
+max_height = 1920
+
+[video]
+ffmpeg = "/opt/homebrew/bin/ffmpeg"
+ffprobe = "/opt/homebrew/bin/ffprobe"
+crf = 20
+hook_seconds = 3
+min_duration_seconds = 3
+max_duration_seconds = 90
+
+[ai]
+credentials_file = "Credential/9router.md"
+base_url = ""
+model = "cx/gpt-6.1-sol"
+api_key_file = "Credential/ai_key.txt"
+transcription_enabled = true
+transcription_model = ""
+transcription_backend = "local"
+whisper_binary = "/opt/homebrew/bin/whisper-cli"
+whisper_model = "runtime/models/ggml-base.bin"
+frame_count = 6
+
+[reply]
+daily_limit = 20
+max_age_hours = 48
+poll_seconds = 120
+
+[drive]
+mode = "synced_public"
+sync_dir = "Bank-konten-fahra-automation-tiktok-ig-fb-ytb"
+folder_link_file = "Credential/google-drive-link.md"
+credentials_file = "Credential/google_drive_oauth.json"
+client_secrets_file = "Credential/google_oauth_client.json"
+folder_id = ""
+make_video_readable_by_link = true

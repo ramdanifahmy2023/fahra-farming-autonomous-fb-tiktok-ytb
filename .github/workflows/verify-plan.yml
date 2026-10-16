@@ -1,4 +1,4 @@
-name: Periksa rencana
+name: Verifikasi workflow
 
 on:
   push:
@@ -11,23 +11,26 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Ambil dokumen
+      - name: Ambil kode
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Siapkan Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.14'
-      - name: Periksa file, tautan, dan pola rahasia
-        run: python scripts/verify_plan.py --output runtime/verification/ci.json
-      - name: Simpan bukti pemeriksaan dokumen
+      - name: Pasang dependency terkunci
+        run: python -m pip install -r requirements.lock
+      - name: Periksa source dan seluruh tes tanpa jaringan
+        run: python scripts/verify.py --mode full --output runtime/verification/ci
+      - name: Simpan bukti pemeriksaan
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: planning-verification
-          path: runtime/verification/ci.json
+          name: workflow-verification
+          path: runtime/verification/ci/
           retention-days: 14
           if-no-files-found: ignore

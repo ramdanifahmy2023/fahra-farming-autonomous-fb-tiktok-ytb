@@ -4,12 +4,12 @@ Baca [memory.md](memory.md), [rencana](docs/PLAN.md), [audit](docs/AUDIT.md), [t
 
 ## Status dan ruang lingkup
 
-Pada 16 Oktober 2026 proyek ini berisi audit, rencana, dokumentasi operasi, dan pemeriksa dokumen. Worker baru, schema DB, downloader adapter, scheduler, persona, dan automasi belum diimplementasikan. Jangan mengklaim CI dokumen sebagai bukti fitur berjalan. Permintaan saat ini adalah audit dan plan; jangan menyalakan layanan, mematikan workflow lama, memublikasikan preview, atau mengubah automation Repliz dalam tahap ini.
+Pengguna menyetujui **implementasi seluruh paket** pada 16 Oktober 2026 setelah audit. Kode ada pada paket `fahra_automation`; jangan memperlakukan permintaan ini sebagai audit saja. Baca [operasi](docs/OPERATIONS.md) dan status aktual di memory/worklog. Aktivasi produksi menunggu suite, preview, migrasi final, dan ownership. Default config tetap shadow. Bedakan kode tersedia, preview lulus, jadwal diterima, publikasi terverifikasi, dan aksi komentar nyata.
 
 ## Keputusan tetap pengguna
 
 - Input baru lewat bot Telegram baru, satu link Reel menjadi satu asset dan tiga delivery wajib: satu TikTok, satu Facebook Page, satu YouTube Shorts. Histori/pending legacy mempertahankan tujuan aslinya; jangan membuat backfill platform lain otomatis. Target output tidak mencakup Instagram; kata ig pada nama bank adalah nama folder pilihan pengguna.
-- Batas paket baru maksimal 20 video per akun per hari Asia/Jakarta, terpisah dari kuota reply. Angka lima pada workflow lama tidak boleh diwarisi atau diubah pada proyek lama selama audit ini. Batas provider yang lebih rendah tetap dihormati.
+- Batas paket baru maksimal 20 video per akun per hari Asia/Jakarta, terpisah dari kuota reply. Angka lima pada workflow lama tidak boleh diwarisi atau diubah pada proyek lama pada workspace lama. Batas provider yang lebih rendah tetap dihormati.
 - Akun baru ketiga platform otomatis ikut rotasi setelah koneksi, identitas, capability, dan snapshot kuota lengkap. Disconnect mengeluarkan akun dari pilihan berikutnya; reconnect memakai ID/kuota lama. Snapshot parsial tidak boleh mengosongkan atau mengaktifkan pool.
 - Jangan menggunakan atau mengubah TikTok iq7fanspage, ID `6a9ec26462caae1e0415af16`, posting, atau profilnya. Facebook Page bernama IQ7 adalah identitas berbeda.
 - Paket baru menggantikan dua workflow lama setelah tes lulus dan tahap cutover dijalankan. Satu akun/post hanya punya satu pemilik kirim/reply. Token bot berbeda tidak menyelesaikan konflik antarworker.
@@ -23,13 +23,13 @@ Pada 16 Oktober 2026 proyek ini berisi audit, rencana, dokumentasi operasi, dan 
 
 ## Disiplin kerja dan GitHub
 
-Repo tujuan privat `ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb`. Pengguna mengizinkan pembuatan repo, commit/push hasil PASS, dan dokumentasi audit ini. Tidak perlu meminta ulang izin Git. Jangan push paket baru ke repo lama.
+Repo tujuan privat `ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb`. Pengguna mengizinkan pembuatan repo, commit/push hasil PASS, dan implementasi dan dokumentasi dalam lingkup permintaan ini. Tidak perlu meminta ulang izin Git. Jangan push paket baru ke repo lama.
 
 Pekerjaan berat memakai branch `work/YYYYMMDD-topik` dan worktree `/Volumes/DATA KERJA /Project Dev/worktrees/fahra-farming-autonomous-fb-tiktok-ytb/YYYYMMDD-topik`, tambah akhiran bila sudah terpakai. Worktree memakai fixture, runtime dan venv sendiri. Jangan memasang dua paket Python lama bernama peternakan ke satu venv, menyalin DB aktif, menautkan runtime produksi, menjalankan bot kedua, atau menerbitkan preview.
 
 Setiap tugas meninggalkan worklog bahasa Indonesia: permintaan, perubahan, alasan, file, base/branch/worktree, pemeriksaan, hasil, batas bukti, merge/push, dan status pembersihan. Update memory jika keputusan berubah dan tools jika cara operasi berubah. Bedakan rencana, mock, preview nyata, request diterima, dan hasil publik terverifikasi.
 
-Untuk paket rencana, jalankan `python3 scripts/verify_plan.py --credentials-dir PATH_CREDENTIAL` dan review isi. Ketika implementasi dimulai, perluas verifier/CI agar wajib menjalankan suite runtime, integrasi tiruan, dan pemeriksaan yang dijabarkan di [ACCEPTANCE.md](docs/ACCEPTANCE.md). Verifier dokumen tidak cukup untuk menyatakan kode layanan PASS.
+Jalankan `./scripts/verify.sh --mode full --base origin/main --secrets-from PATH_CREDENTIAL`. CI memakai verifier sama dan suite dengan jaringan dinonaktifkan. Perubahan media/AI/Drive juga perlu preview nyata di runtime terpisah, tanpa publikasi. `scripts/verify_plan.py` tetap pemeriksa arsip rencana saja; bukan bukti runtime. Baca [ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 Alur: PASS lokal, commit/push branch, CI success pada SHA tepat, main bersih dan selaras remote, merge ff-only, periksa hasil gabungan, push main, periksa CI dan SHA remote. Jangan force-push. Restart hanya layanan yang kodenya berubah setelah layanan itu benar-benar diimplementasikan/diaktifkan. Hapus worktree tanpa force dan branch lokal dengan `git branch -d` setelah bukti diarsipkan, merge/push/CI lulus. Bukti hash akhir boleh disimpan di runtime supaya tidak menambah commit hanya untuk merekam hash sendiri.
 
