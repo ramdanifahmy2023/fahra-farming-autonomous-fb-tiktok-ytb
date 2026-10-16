@@ -64,7 +64,7 @@ Commit implementasi 54e4417 telah melewati 263/263 tes tanpa skip, pemeriksaan r
 
 Doctor produksi lulus bot, Repliz, AI, Drive, dan MCP. Rehearsal memakai SQLite backup API: 158 jobs/assets,539comment events,126reply attempts;16 pemeriksaan exact-row PASS. Final setelah freeze memiliki 158 jobs/assets (129published29failed),541comment events,126reply attempts,22contexts,8393events;16 pemeriksaan PASS. Manifest final03bf0b76ff714313a4d8c7cb99e0005d. Rekonsiliasi final ready=true, missing_active_schedules dan journal unresolved kosong. Bukti lokal final-validation.json dan final-reconcile.json.
 
-Dua LaunchAgent lama di-disable persisten lalu bootout sekitar12:02WIB. Pemeriksaan langsung pertama masih melihat transisi unloading; pemeriksaan ulang mengonfirmasi kedua label unloaded dan lock bebas. Snapshot final hanya berjalan sesudah guard tersebut lulus. Ownership baru diaktifkan; service baru id.fahra.automation.social mulai dengan PID7903, satu polling bot baru. Config lokal live/publish_enabled=true, reply tetapfalse dan cleanupfalse selama pilot.
+Dua LaunchAgent lama di-disable persisten lalu bootout sekitar12:02WIB. Pemeriksaan langsung pertama masih melihat transisi unloading; pemeriksaan ulang mengonfirmasi kedua label unloaded dan lock bebas. Snapshot final hanya berjalan sesudah guard tersebut lulus. Ownership baru diaktifkan; service baru id.fahra.automation.social mulai dengan PID7903, satu polling bot baru. Config lokal live/publish_enabled=true, reply  tetap false dan cleanupfalse selama pilot.
 
 Pilot DaLK4M_JU9W ternyata sudah ada dalam arsip TikTok: failed dengan ID jadwal6ad16f95af766377d4348a02. Enqueue mengembalikan duplikat; assert accepted=1 menghentikan pembukaan pause. Tidak ada delivery/aset baru atau POST baru; satu batch operator kosong tercatat. Antrean masih paused=true. Pengguna diminta link baru yang belum pernah masuk bot lama serta Start pada @Fahra_autonomousbot; getChat admin terakhir masih400chat not found. Jangan melaporkan pilot/posting/notifikasi/komentar nyata sebagai selesai.
 
@@ -75,7 +75,7 @@ Backup cutover tambahan tersimpan pada penyimpanan internal `~/Library/Applicati
 
 ## 16 Oktober 2026: video tanpa mirror dan kredit Instagram
 
-Pengguna mengirim Reel baru melalui bot dan meminta editor tidak melakukan mirror; caption harus memuat akun Instagram sumber. Pemeriksaan produksi menemukan DbnsuCYybBP pada batch63f40e1579474fc48888f20de204e81e, satuasset dan tiga delivery queued tanpa jadwal/intent, paused=true. Respons onboarding dan kartu progres Telegram tercatat terkirim. Dua label lama tetap retired; tidak ada polling kedua.
+Pengguna mengirim Reel baru melalui bot dan meminta editor tidak melakukan mirror; caption harus memuat akun Instagram sumber. Pemeriksaan produksi menemukan DbnsuCYybBP pada batch 63f40e1579474fc48888f20de204e81e, satuasset dan tiga delivery queued tanpa jadwal/intent, paused=true. Respons onboarding dan kartu progres Telegram tercatat terkirim. Dua label lama tetap retired; tidak ada polling kedua.
 
 Pekerjaan dilakukan pada branch work/20261016-source-credit, worktree `/Volumes/DATA KERJA /Project Dev/worktrees/fahra-farming-autonomous-fb-tiktok-ytb/20261016-source-credit`, base0f4db570e46f8e5c20e2d3d1489141c781f47ef6. Venv/runtime fixture terpisah; credential direferensikan dari file lokal, DB produksi tidak disalin ke worktree. Kebijakan baru berlaku untuk pekerjaan yang belum dikirim, bukan mengubah arsip video atau jadwal terbit. Hasil tes, preview, deployment, serta pilot dicatat setelah dilakukan.
 
@@ -85,3 +85,10 @@ Perubahan: filter FFmpeg tidak lagi memakai hflip; checkpoint renderer/preview m
 Probe metadata nyata DbnsuCYybBP membuktikan channel=nopri.adi.16144. Preview nyata selesai tanpa POST:16,5detik720×1280/30fps/H264AAC,8.255.621byte, hash lokal/Drive331395e69a6ff2f5dcbade598e5a3e15930382e66c8e7e9069cb862767f6dc2c. MCP resume dengan kode final memvalidasi manifest tanpa download baru. Full checksum Drive.verify_delivery cocok. Pemeriksaan visual sumber/hasil3,2detik menunjukkan orientasi sama; hook terlihat1detik dan hilang3,2detik. Probe FFmpeg asimetris sintetis juga PASS. Payload preview tiga platform memuat source: @nopri.adi.16144 tepat sekali; teks platform pada probe ini berasal dari caption AI nyata yang dipetakan ke fixture metadata, bukan klaim posting. Bukti pada runtime/verification/source-credit/.
 
 Review independen tidak menemukan blocker pilot. Catatan: retry arsip lama yang sudah downloaded/rendered tanpa source_attribution sengaja tertahan sampai revisi metadata yang sah; arsip tidak ditulis ulang otomatis. Produksi tetap paused selama pengujian/perubahan dan belum menerbitkan pilot pada tahap ini.
+
+
+### Deployment tanpa mirror dan kredit sumber
+
+Seluruh 280 tes lulus tanpa skip, verifier full dengan credential aktual dan preview nyata PASS. Commit 26c77318145ff3844a9e75c21f85075a64d35c97 lulus CI branch 38858165665. Service baru dihentikan sementara; main bersih digabung ff-only, diperiksa full kembali, dipush dan dicocokkan hash remote; CI main 38858464310 sukses. Snapshot SQLite API sebelum deployment disimpan, tiga job Telegram dipastikan belum punya intent/jadwal. Pilot gate diganti ke DbnsuCYybBP dan paused=false melalui transaksi dengan event operator_pilot_resumed. Service baru direstart setelah CI; kedua layanan lama tetap disabled. Reply dan cleanup  tetap false sambil menunggu bukti tiga publikasi.
+
+Arsip pengembangan source-credit berisi 33 file, dua snapshot SQLite quick_check ok, enam frame, video, laporan dan log dengan checksum cocok. Lokasi runtime/verification/source-credit-20261016/development-artifacts/manifest.json. Worktree tetap utuh selama pilot berjalan.

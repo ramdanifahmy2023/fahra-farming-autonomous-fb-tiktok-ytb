@@ -2,7 +2,11 @@
 
 Root proyek: `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader`. Nama volume DATA KERJA memiliki spasi di akhir; kutip seluruh path.
 
-## Cakupan verifikasi implementasi terbaru
+## Cakupan verifikasi terbaru
+
+Checkpoint 16 Oktober setelah perubahan pengguna: commit 26c7731, **280/280 tes tanpa skip PASS**, verifier full lokal PASS, [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38858165665) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38858464310) success pada SHA yang sama. Preview nyata DbnsuCYybBP membuktikan orientasi tanpa mirror, zoom 110%, hook [0,3), seluruh checksum Drive cocok, serta kredit `source: @nopri.adi.16144` pada payload ketiga platform. Bukti: `runtime/verification/source-credit-20261016/`. Status pilot produksi dicatat di memory/worklog.
+
+## Checkpoint implementasi sebelum perubahan orientasi
 
 Checkpoint 16 Oktober 2026 pada commit [54e4417](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/commit/54e4417d01b031b472f541a4492418dcbfe58d05): **263/263 tes offline PASS, tanpa skip**, verifier full lokal PASS, serta [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853332246) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853445793) success. CI menjalankan pemeriksaan source dan seluruh suite dengan dependency terkunci, tanpa credential, jaringan aplikasi atau deployment. Bukti lokal: `runtime/verification/verify-20261016T045916808690Z/` dan `runtime/verification/implementation-20261016/git-initial-deploy.json`.
 
@@ -66,8 +70,15 @@ TikTok lama: `/Volumes/DATA KERJA /Project Dev/Peternakan-akun`, label `id.fahra
 
 ## Kredit sumber Instagram dan orientasi video
 
-Instruksi terbaru pengguna: hasil baru tidak di-mirror. Zoom110% dan hook[0,3) tetap. Renderer menyimpan edits.mirror=false; arsip lama dengan mirror=true tetap menjadi histori.
+Instruksi terbaru pengguna: hasil baru tidak di-mirror. Zoom110% dan hook [0,3) tetap. Renderer menyimpan edits.mirror=false; arsip lama dengan mirror=true tetap menjadi histori.
 
 Downloader tetap MCP. Metadata pemilik dibaca read-only melalui yt-dlp pada container downloader yang sama, memakai lock `/tmp/instagram-mcp.lock`; source MCP tidak diubah. Hanya channel/owner.username/user.username dari extractor Instagram dan shortcode/URL yang cocok menjadi bukti username. Nama tampilan, caption, dan uploader_id bukan sumber kredit. Metadata yang hilang/bertentangan menahan pengiriman.
 
 Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada caption/deskripsi ketiga platform dan menghitung batas karakter sesudah kredit. Kredit bukan teks overlay tambahan. Job yang sudah ber-intent/terbit tetap memakai body tersimpan. Retry manual arsip yang sudah melewati download tanpa bukti atribusi membutuhkan revisi/enrichment terverifikasi; jangan menebak kredit atau menerbitkan ulang artifact mirror lama.
+
+
+## Kendali reply dan batch
+
+Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk worker komentar. Saat migrasi, jangan memakai CLI sekunder dari modul replies untuk resume; jalur utama mempertahankan registry dan cutoff akun lama, lalu inventory worker memberi cutoff baru untuk akun tambahan. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
+
+Batch mendukung maksimal 100 link per pesan, backlog 1.000 asset pending, dengan rotasi yang berlanjut antarbatch/restart. Batas tersebut terpisah dari kuota 20 video per akun per hari WIB.

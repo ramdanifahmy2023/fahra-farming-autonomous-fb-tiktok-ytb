@@ -4,7 +4,7 @@ Baca [memory.md](memory.md), [rencana](docs/PLAN.md), [audit](docs/AUDIT.md), [t
 
 ## Status dan ruang lingkup
 
-Pengguna menyetujui **implementasi seluruh paket** pada 16 Oktober 2026 setelah audit. Kode ada pada paket `fahra_automation`; jangan memperlakukan permintaan ini sebagai audit saja. Baca [operasi](docs/OPERATIONS.md) dan status aktual di memory/worklog. Aktivasi produksi menunggu suite, preview, migrasi final, dan ownership. Default config tetap shadow. Bedakan kode tersedia, preview lulus, jadwal diterima, publikasi terverifikasi, dan aksi komentar nyata.
+Pengguna menyetujui **implementasi seluruh paket** pada 16 Oktober 2026 setelah audit. Kode ada pada paket `fahra_automation`; jangan memperlakukan permintaan ini sebagai audit saja. Baca [operasi](docs/OPERATIONS.md) dan status aktual di memory/worklog. Migrasi final dan ownership produksi sudah aktif; status pause, pilot gate, publikasi, dan reply terbaru mengikuti memory/worklog. Default config contoh tetap shadow. Bedakan kode tersedia, preview lulus, jadwal diterima, publikasi terverifikasi, dan aksi komentar nyata.
 
 ## Keputusan tetap pengguna
 
