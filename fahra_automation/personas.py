@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 
 from .config import EXCLUDED_ACCOUNT_ID
 from .util import iso
@@ -46,10 +47,10 @@ class PersonaRegistry:
                     FOREIGN KEY(persona_id,version) REFERENCES persona_versions(persona_id,version));
             ''')
 
-    def bind(self, account_id, platform, profile=None):
+    def bind(self, account_id, platform, profile=None, *, connection=None):
         if not account_id or account_id == EXCLUDED_ACCOUNT_ID or platform not in PLATFORMS:
             raise ValueError('Identitas/platform persona tidak diizinkan.')
-        with self.store.tx() as c:
+        with nullcontext(connection) if connection is not None else self.store.tx() as c:
             current = c.execute('''SELECT a.*,v.profile,v.hash FROM persona_accounts a
                 JOIN persona_versions v USING(persona_id,version) WHERE account_id=?''', (account_id,)).fetchone()
             if current and current['platform'] != platform:

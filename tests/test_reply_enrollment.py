@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from fahra_automation import cli, replies
 from fahra_automation.config import Config
 from fahra_automation.db import Store
-from fahra_automation.reply_store import ReplyStore
+from fahra_automation.reply_store import ReplyStore, ReplyWait
 from fahra_automation.util import iso, now
 
 
@@ -127,6 +127,15 @@ class ReplyEnrollmentTest(unittest.TestCase):
         self.assertIsNone(self.store.get('reply_since'))
         self.api.pages.assert_not_awaited()
 
+    def test_secondary_preflight_generation_change_does_not_enable_or_enroll(self):
+        self.migrated()
+        before = self.settings()
+        self.api.request.side_effect = lambda *args, **kwargs: self.store.begin_sync()
+        with self.assertRaises(ReplyWait):
+            self.secondary('resume')
+        self.assertEqual(self.settings(), before)
+        self.api.close.assert_awaited_once()
+
     def test_primary_first_resume_and_later_inventory_keep_join_time(self):
         with patch('fahra_automation.reply_store.iso', return_value=self.enrolled_at):
             self.primary('resume')
@@ -158,17 +167,18 @@ class ReplyEnrollmentTest(unittest.TestCase):
         self.store.set('reply_account_since', explicit)
         self.store.begin_sync()
         worker = self.worker()
-        asyncio.run(worker.inventory())
-        self.assertEqual(self.store.get('reply_account_ids'), [])
+        with self.assertRaises(ReplyWait):
+            asyncio.run(worker.inventory())
+        self.assertEqual(self.store.get('reply_account_ids'), self.legacy_ids)
         cutoffs = self.store.get('reply_account_since')
-        self.assertEqual(len(cutoffs), 46)
+        self.assertEqual(cutoffs, explicit)
         self.assertEqual(cutoffs[self.legacy_ids[0]], explicit[self.legacy_ids[0]])
-        self.assertEqual(cutoffs[self.legacy_ids[1]], self.legacy_since)
         self.assertFalse(self.store.get('reply_enabled'))
         self.snapshot()
         with patch('fahra_automation.reply_store.iso', return_value=self.enrolled_at):
             asyncio.run(worker.inventory())
         cutoffs = self.store.get('reply_account_since')
+        self.assertEqual(cutoffs[self.legacy_ids[1]], self.legacy_since)
         self.accounts[-1]['isConnected'] = False
         asyncio.run(worker.inventory())
         self.assertNotIn(self.new_ids[-1], self.store.get('reply_account_ids'))

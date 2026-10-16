@@ -11,7 +11,7 @@ import httpx
 from fahra_automation.config import Config, EXCLUDED_ACCOUNT_ID
 from fahra_automation.db import Store
 from fahra_automation.reply_ai import ReplyAI, style_hint, validate_context, validate_reply
-from fahra_automation.reply_store import ReplyStore
+from fahra_automation.reply_store import ReplyStore, ReplyWait
 from fahra_automation.replies import ReplyWorker, normalize_comment, skip_reason
 from fahra_automation.repliz import ReplizError, MutationNotSent
 from fahra_automation.util import iso, now
@@ -45,6 +45,8 @@ class FakeAPI:
         raise AssertionError(path)
 
     async def request(self, method, path, **kwargs):
+        if kwargs.get('before_send'):
+            kwargs['before_send']()
         if method == 'POST':
             self.posts.append((path, kwargs['json']))
             if self.error:
@@ -330,7 +332,9 @@ class ReplyTest(unittest.IsolatedAsyncioTestCase):
         await self.worker.inventory()
         self.assertEqual(self.store.get('reply_account_since')['youtube-a'], old_cutoff)
         self.store.begin_sync()
-        self.assertEqual(await self.worker.inventory(), {})
+        with self.assertRaises(ReplyWait):
+            await self.worker.inventory()
+        self.assertEqual(set(self.worker.accounts), {'account-a', 'facebook-a', 'youtube-a'})
 
     async def test_quota_wait_does_not_consume_failure_budget_or_regenerate(self):
         self.config.data['reply']['daily_limit'] = 1
@@ -441,7 +445,7 @@ class ReplyTest(unittest.IsolatedAsyncioTestCase):
         for job in self.store.queue():
             if job['platform'] == 'tiktok':
                 self.store.checkpoint(job['id'], 'published', payload={'post_id': 'post-' + job['id']})
-        async def ensure(job):
+        async def ensure(job, **kwargs):
             if self.worker.profiles.ensure_post.await_count == 1:
                 raise RuntimeError('temporary provider failure')
             return {'verified': True, 'owner': 'custom'}

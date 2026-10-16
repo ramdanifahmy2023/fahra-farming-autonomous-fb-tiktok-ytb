@@ -10,10 +10,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .comment_profiles import CommentProfiles, object_id, save
-from .config import Config, EXCLUDED_ACCOUNT_ID, allowed_account
+from .config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID, allowed_account
 from .db import Store
 from .reply_ai import ReplyAI
-from .reply_store import ReplyStore
+from .reply_store import ReplyStore, ReplyWait
 from .personas import PersonaRegistry
 from .journal import AttemptJournal
 from .repliz import Repliz, ReplizError, MutationNotSent
@@ -80,6 +80,7 @@ class ReplyWorker:
         self.keywords = [w for words in profile['categories'].values() for w in words]
         self.own_ids = set()
         self.accounts = {}
+        self.inventory_generation = None
         self.profile_lock = asyncio.Lock()
 
     def own_ids_for(self, account_id):
@@ -87,13 +88,17 @@ class ReplyWorker:
         return self.own_ids | set(aliases.get(account_id, []))
 
     async def inventory(self):
+        generation = self.db.require_snapshot()
         all_accounts = await self.api.pages('/public/account', {'types': ['tiktok', 'facebook', 'youtube']})
-        approved = {a['id'] for a in self.store.eligible_accounts()}
-        self.own_ids = {str(a['generatedId']) for a in all_accounts if a.get('generatedId')}
-        self.accounts = {object_id(a): a for a in all_accounts if allowed_account(a) and object_id(a) in approved and a.get('isConnected')}
-        self.db.enroll_accounts(self.accounts)
-        for identity, account in self.accounts.items():
-            self.personas.bind(identity, account['type'])
+        with self.store.tx() as c:
+            self.db.require_snapshot(generation, connection=c)
+            approved = {r[0] for r in c.execute('SELECT id FROM accounts WHERE connected=1 AND eligible=1')}
+            own_ids = {str(a['generatedId']) for a in all_accounts if a.get('generatedId')}
+            accounts = {object_id(a): a for a in all_accounts if allowed_account(a) and object_id(a) in approved and a.get('isConnected')}
+            self.db.enroll_accounts(accounts, generation=generation, connection=c)
+            for identity, account in accounts.items():
+                self.personas.bind(identity, account['type'], connection=c)
+        self.own_ids, self.accounts, self.inventory_generation = own_ids, accounts, generation
         return self.accounts
 
     async def ingest(self):
@@ -101,9 +106,11 @@ class ReplyWorker:
             return
         since = timestamp(self.store.get('reply_since'))
         await self.inventory()
+        generation = self.inventory_generation
         if not self.accounts:
             raise ValueError('Tidak ada akun reply yang terhubung/diizinkan.')
         rows = await self.api.pages('/public/comment', {'accountIds': list(self.accounts)})
+        self.db.require_snapshot(generation)
         inserted = 0
         for raw in rows:
             if raw.get('accountId') not in self.accounts:
@@ -121,13 +128,15 @@ class ReplyWorker:
         self.store.set('reply_poll_error', None)
         self.store.record('reply_poll', comments=len(rows), inserted=inserted, accounts=len(self.accounts))
 
-    async def children(self, item):
+    async def children(self, item, generation=None):
         result, token, seen = [], None, set()
         for _ in range(20):
             query = {'accountId': item['account_id'], 'commentId': item['platform_id']}
             if token:
                 query['nextToken'] = token
             page = unwrap(await self.api.request('GET', '/public/content/' + item['post_id'] + '/comment', params=query))
+            if generation is not None:
+                self.db.require_snapshot(generation, account_id=item['account_id'])
             if not isinstance(page, dict) or not isinstance(page.get('docs'), list):
                 raise ValueError('Respons thread tidak dikenal.')
             result.extend(page['docs'])
@@ -139,18 +148,20 @@ class ReplyWorker:
             seen.add(token)
         raise ValueError('Thread terlalu panjang atau cursor berulang; perlu pemeriksaan.')
 
-    async def fresh(self, event):
+    async def fresh(self, event, generation=None):
         item = event['payload']
-        eligible = {a['id'] for a in self.store.eligible_accounts()}
-        if item['account_id'] == EXCLUDED_ACCOUNT_ID or item['account_id'] not in eligible:
+        generation = self.db.require_snapshot(generation, account_id=item['account_id'])
+        if item['account_id'] == EXCLUDED_ACCOUNT_ID:
             raise ValueError('Akun tidak diizinkan.')
         account = unwrap(await self.api.request('GET', '/public/account/' + item['account_id']))
+        self.db.require_snapshot(generation, account_id=item['account_id'])
         if object_id(account) != item['account_id'] or not allowed_account(account) or not account.get('isConnected') or not account.get('generatedId'):
             raise ValueError('Akun tidak tersedia/dikecualikan.')
         if account.get('generatedId'):
             self.own_ids.add(str(account['generatedId']))
         config = account.get('config') or {}
         overrides = await self.api.pages('/public/automation', {'accountIds': [item['account_id']]})
+        self.db.require_snapshot(generation, account_id=item['account_id'])
         matching = []
         for override in overrides:
             if override.get('accountId') != item['account_id']:
@@ -168,6 +179,7 @@ class ReplyWorker:
         if config.get('reply', {}).get('isActive'):
             return None, 'Native reply masih aktif pada posting ini.'
         raw = unwrap(await self.api.request('GET', '/public/comment/' + item['inbox_id']))
+        self.db.require_snapshot(generation, account_id=item['account_id'])
         fresh = normalize_comment(raw)
         if any(fresh[k] != item[k] for k in ('account_id', 'inbox_id', 'platform_id', 'post_id', 'text', 'author_id', 'parent_id')):
             return None, 'Identitas/teks komentar berubah sejak diterima.'
@@ -180,7 +192,7 @@ class ReplyWorker:
             return None, reason
         if any(r.get('isHidden') or r.get('isDeleted') for r in (raw, raw.get('comment', {}))):
             return None, 'Komentar disembunyikan/dihapus.'
-        replies = await self.children(item)
+        replies = await self.children(item, generation)
         if replies:
             return None, 'Thread sudah memiliki balasan; perlu pemeriksaan riwayat.'
         if item.get('parent_id'):
@@ -191,13 +203,19 @@ class ReplyWorker:
     async def process_one(self):
         if not self.store.get('reply_enabled', False):
             return
-        event = self.db.claim()
+        try:
+            generation = self.db.require_snapshot()
+            if self.inventory_generation != generation:
+                await self.inventory()
+                generation = self.inventory_generation
+            event = self.db.claim(generation=generation)
+        except ReplyWait:
+            return
         if not event:
             return
         item = event['payload']
         try:
-            if not self.own_ids:
-                await self.inventory()
+            self.db.require_snapshot(generation)
             if now() - timestamp(item['comment_at']) > timedelta(hours=self.config.section('reply')['max_age_hours']):
                 self.db.update(event['id'], 'skipped', 'Komentar melewati umur antrean.')
                 return
@@ -216,8 +234,9 @@ class ReplyWorker:
             if prior and prior.get('state') in {'intended', 'unknown', 'accepted'}:
                 self.db.restore_send(event, prior)
                 return
-            await self.ensure_profile(job)
-            _, reason = await self.fresh(event)
+            await self.ensure_profile(job, generation)
+            self.db.require_snapshot(generation, account_id=item['account_id'])
+            _, reason = await self.fresh(event, generation)
             if reason:
                 self.db.update(event['id'], 'needs_review' if item.get('parent_id') else 'skipped', reason, job_id=job['id'])
                 return
@@ -225,10 +244,12 @@ class ReplyWorker:
                 context = self.db.context(job)
                 if not context:
                     context = await self.ai.context(job, self.config.runtime / 'replies/contexts' / job['id'])
+                    self.db.require_snapshot(generation, account_id=item['account_id'])
                     self.db.save_context(job, context)
                 event['persona'] = self.personas.bind(item['account_id'], job['platform'])
                 draft = await self.ai.draft(event, context, self.db.recent(item['account_id']),
                                             self.config.runtime / 'replies/drafts' / event['id'])
+                self.db.require_snapshot(generation, account_id=item['account_id'])
                 if draft['action'] != 'reply':
                     self.db.update(event['id'], 'skipped' if draft['action'] == 'skip' else 'needs_review',
                                    draft['reason'], draft=draft, job_id=job['id'])
@@ -238,24 +259,33 @@ class ReplyWorker:
             if not self.store.get('reply_enabled', False):
                 return
             # Recheck the original comment and automation after the potentially slow AI calls.
-            _, reason = await self.fresh(event)
+            _, reason = await self.fresh(event, generation)
             if reason:
                 self.db.update(event['id'], 'needs_review' if item.get('parent_id') else 'skipped', reason, job_id=job['id'])
                 return
             self.config.require_live_action()
-            if not self.db.reserve_send(event, self.config.section('reply')['daily_limit']):
-                return
-            try:
+            def before_send():
+                try:
+                    reserved = self.db.reserve_send(event, self.config.section('reply')['daily_limit'], generation=generation)
+                except ValueError as exc:
+                    raise MutationNotSent(str(exc)) from None
+                if not reserved:
+                    raise ReplyWait('Reply ditunda oleh pause atau kuota; draft tetap disimpan.')
                 self.journal.begin(journal_id, {'account_id': item['account_id'], 'post_id': item['post_id'],
                     'comment_id': item['platform_id'], 'inbox_id': item['inbox_id'], 'text': event['draft']['text'],
                     'started_at': iso(), 'job_id': job['id']})
-                body = unwrap(await self.api.request('POST', '/public/comment/' + item['inbox_id'], json={'text': event['draft']['text']}))
+            try:
+                body = unwrap(await self.api.request('POST', '/public/comment/' + item['inbox_id'],
+                    before_send=before_send, json={'text': event['draft']['text']}))
                 reply_id = (body.get('commentId') or body.get('id') or body.get('_id')) if isinstance(body, dict) else None
                 self.journal.mark(journal_id, 'accepted' if reply_id else 'unknown', schedule_id=str(reply_id) if reply_id else None)
                 self.db.finish_send(event['id'], 'sent_unverified' if reply_id else 'send_unknown', str(reply_id) if reply_id else None)
+            except ReplyWait:
+                raise
             except MutationNotSent as exc:
-                self.journal.mark(journal_id, 'not_sent', error=safe_error(exc))
-                self.db.finish_send(event['id'], 'failed', error=safe_error(exc))
+                if self.journal.state(journal_id):
+                    self.journal.mark(journal_id, 'not_sent', error=safe_error(exc))
+                    self.db.finish_send(event['id'], 'failed', error=safe_error(exc))
                 self.db.update(event['id'], 'drafted', 'Request belum dikirim; menunggu guard aktif.', delay=300)
             except ReplizError as exc:
                 definite = exc.status in {400, 401, 403, 404, 422, 429}
@@ -265,12 +295,20 @@ class ReplyWorker:
                     self.db.update(event['id'], 'drafted', 'Batas provider; menunggu tanpa mengulang draft.', delay=max(900, exc.retry_after))
             except Exception as exc:
                 prior = self.journal.state(journal_id)
+                if self.db.get(event['id'])['status'] != 'sending':
+                    raise
                 if prior and prior.get('state') != 'accepted':
                     self.journal.mark(journal_id, 'unknown', error=safe_error(exc))
                 if prior and prior.get('state') == 'accepted':
                     self.db.restore_send(event, prior)
                 else:
                     self.db.finish_send(event['id'], 'send_unknown', error=safe_error(exc))
+        except ConfigurationError as exc:
+            current = self.db.get(event['id'])
+            if current['status'] == 'sending':
+                self.db.finish_send(event['id'], 'send_unknown', error=safe_error(exc))
+            else:
+                self.db.wait(event['id'], safe_error(exc))
         except Exception as exc:
             current = self.db.get(event['id'])
             if current['status'] in {'sending', 'send_unknown', 'sent_unverified', 'sent'}:
@@ -279,7 +317,7 @@ class ReplyWorker:
                     self.db.finish_send(event['id'], 'send_unknown', error=safe_error(exc))
             else:
                 failures = self.db.failure(event['id']) if isinstance(exc, ValueError) else current['attempts']
-                self.db.update(event['id'], 'needs_review' if failures >= 3 else
+                self.db.update(event['id'], 'needs_review' if isinstance(exc, ValueError) and failures >= 3 else
                                ('drafted' if current['draft'] else 'queued'), safe_error(exc), delay=300)
         finally:
             self.db.release(event['id'])
@@ -331,11 +369,10 @@ class ReplyWorker:
                 self.store.record('reply_poll_failed', error=safe_error(exc))
             await asyncio.sleep(self.config.section('reply')['poll_seconds'])
 
-    async def ensure_profile(self, job):
+    async def ensure_profile(self, job, generation=None):
         async with self.profile_lock:
             job = self.store.job(job['id'])
-            if job['account_id'] not in {a['id'] for a in self.store.eligible_accounts()}:
-                raise ValueError('Snapshot akun tidak siap untuk onboarding otomasi.')
+            generation = self.db.require_snapshot(generation, account_id=job['account_id'])
             retry_at = self.store.get('reply_profile_retry_at')
             if retry_at and timestamp(retry_at) > now():
                 raise RuntimeError('Onboarding otomasi menunggu batas provider.')
@@ -343,8 +380,16 @@ class ReplyWorker:
             if retry_at and timestamp(retry_at) > now():
                 raise RuntimeError('Onboarding posting menunggu pemeriksaan berikutnya.')
             self.config.require_live_action()
+            def before_mutation():
+                try:
+                    self.db.require_snapshot(generation, account_id=job['account_id'])
+                except (ConfigurationError, ValueError) as exc:
+                    raise MutationNotSent(str(exc)) from None
             try:
-                result = await self.profiles.ensure_post(job)
+                result = await self.profiles.ensure_post(job, before_mutation=before_mutation)
+                self.db.require_snapshot(generation, account_id=job['account_id'])
+            except ConfigurationError:
+                raise
             except Exception as exc:
                 failures = job['payload'].get('comment_profile_failures', 0) + 1
                 delay = min(86400, 300 * 2 ** min(failures - 1, 8))
@@ -461,14 +506,16 @@ def main():
             async def activate():
                 api = Repliz(config)
                 try:
+                    generation = db.require_snapshot()
                     accounts = await api.pages('/public/account', {'types': ['tiktok', 'facebook', 'youtube']})
+                    db.require_snapshot(generation)
                     eligible = {a['id'] for a in store.eligible_accounts()}
                     ids = [object_id(a) for a in accounts if allowed_account(a) and a.get('isConnected') and object_id(a) in eligible]
                     if not ids:
                         raise ValueError('Tidak ada akun target.')
                     # Verify read access before enabling. Historical comments are marked on first poll.
                     await api.request('GET', '/public/comment', params=[('page', '1'), ('limit', '1')] + [('accountIds', a) for a in ids])
-                    enrollment = db.enroll_accounts(ids, enable=True)
+                    enrollment = db.enroll_accounts(ids, enable=True, generation=generation)
                     store.record('reply_activated', **enrollment)
                 finally:
                     await api.close()

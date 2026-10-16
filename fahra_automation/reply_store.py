@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 from datetime import timedelta
 
-from .config import EXCLUDED_ACCOUNT_ID
+from .config import ConfigurationError, EXCLUDED_ACCOUNT_ID
 from .db import ZONE
 from .util import iso, now
+
+
+class ReplyWait(ConfigurationError):
+    """A temporary account snapshot or send gate is not ready."""
 
 
 class ReplyStore:
@@ -40,8 +45,20 @@ class ReplyStore:
             if 'leased' not in {r[1] for r in c.execute('PRAGMA table_info(comment_events)')}:
                 c.execute('ALTER TABLE comment_events ADD COLUMN leased INTEGER NOT NULL DEFAULT 0')
 
-    def enroll_accounts(self, account_ids=None, *, enable=False):
-        with self.store.tx() as c:
+    def require_snapshot(self, generation=None, *, account_id=None, connection=None):
+        with nullcontext(connection) if connection is not None else self.store.tx() as c:
+            current = self.store.setting(c, 'snapshot_generation', 0)
+            if not self.store._snapshot_fresh(c) or generation is not None and current != generation:
+                raise ReplyWait('Snapshot akun sedang diperbarui atau kedaluwarsa; menunggu snapshot lengkap.')
+            if account_id is not None and not c.execute(
+                    'SELECT 1 FROM accounts WHERE id=? AND connected=1 AND eligible=1', (account_id,)).fetchone():
+                raise ValueError('Akun tidak terhubung/diizinkan pada snapshot lengkap.')
+            return current
+
+    def enroll_accounts(self, account_ids=None, *, enable=False, generation=None, connection=None):
+        with nullcontext(connection) if connection is not None else self.store.tx() as c:
+            if generation is not None:
+                self.require_snapshot(generation, connection=c)
             stamp = iso()
             since = self.store.setting(c, 'reply_since') or stamp
             previous = self.store.setting(c, 'reply_account_ids', [])
@@ -91,8 +108,10 @@ class ReplyStore:
         with self.store.connect() as c:
             return self.decode(c.execute('SELECT * FROM comment_events WHERE id=?', (identity,)).fetchone())
 
-    def claim(self):
+    def claim(self, *, generation=None):
         with self.store.tx() as c:
+            if generation is not None:
+                self.require_snapshot(generation, connection=c)
             row = c.execute("""SELECT * FROM comment_events WHERE status IN ('queued','drafted')
                 AND leased=0 AND next_attempt<=? ORDER BY created_at LIMIT 1""", (iso(),)).fetchone()
             if not row:
@@ -105,6 +124,12 @@ class ReplyStore:
     def release(self, identity):
         with self.store.tx() as c:
             c.execute('UPDATE comment_events SET leased=0 WHERE id=?', (identity,))
+
+    def wait(self, identity, reason):
+        with self.store.tx() as c:
+            c.execute("""UPDATE comment_events SET status=CASE WHEN draft IS NULL THEN 'queued' ELSE 'drafted' END,
+                reason=?,updated_at=? WHERE id=? AND status IN ('processing','queued','drafted')""",
+                (reason, iso(), identity))
 
     def failure(self, identity):
         with self.store.tx() as c:
@@ -142,9 +167,11 @@ class ReplyStore:
             return [r[0] for r in c.execute("""SELECT text FROM reply_attempts WHERE account_id=?
                 AND status IN ('sent','sent_unverified','send_unknown','sending') ORDER BY id DESC LIMIT 8""", (account_id,))]
 
-    def reserve_send(self, event, daily_limit):
+    def reserve_send(self, event, daily_limit, *, generation=None):
         day = now().astimezone(ZONE).date().isoformat()
         with self.store.tx() as c:
+            if generation is not None:
+                self.require_snapshot(generation, account_id=event['account_id'], connection=c)
             # The pause and quota checks share the transaction with the irreversible-send intent.
             if not self.store.setting(c, 'reply_enabled', False):
                 return False

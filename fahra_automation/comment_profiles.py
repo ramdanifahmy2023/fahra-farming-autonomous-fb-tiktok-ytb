@@ -253,7 +253,7 @@ class CommentProfiles:
             raise RuntimeError("Sebagian konfigurasi tidak sesuai; lihat verification.json.")
         return report
 
-    async def ensure_post(self, job):
+    async def ensure_post(self, job, *, before_mutation=None):
         account_id, post_id = job['account_id'], job['payload'].get('post_id')
         if job['status'] != 'published' or not post_id:
             raise ValueError('Otomasi posting memerlukan published dan post_id terverifikasi.')
@@ -276,6 +276,8 @@ class CommentProfiles:
             if journal and journal.state(action_id):
                 journal.mark(action_id, 'accepted', schedule_id=object_id(rows[0]))
             return {'verified': True, 'automation_id': object_id(rows[0]), 'owner': 'custom'}
+        if before_mutation is not None:
+            before_mutation()
         self.require_live()
         if rows:
             identity = object_id(rows[0])
@@ -284,7 +286,8 @@ class CommentProfiles:
             if fresh.get('accountId') != account_id or canonical(fresh.get('config')) != canonical(current):
                 raise RuntimeError('Override berubah sebelum PUT; perlu audit ulang.')
             try:
-                await self.api.request('PUT', '/public/automation/' + identity, json={'config': wanted})
+                await self.api.request('PUT', '/public/automation/' + identity,
+                                       before_send=before_mutation, json={'config': wanted})
             except Exception as exc:
                 self.record(kind='post_update_response_error', id=identity, error=safe_error(exc))
                 if isinstance(exc, MutationNotSent) or isinstance(exc, ReplizError) and exc.status == 429:
@@ -293,6 +296,7 @@ class CommentProfiles:
             journal.begin(action_id, {'account_id': account_id, 'content_id': post_id, 'config': wanted})
             try:
                 await self.api.request('POST', '/public/automation',
+                                       before_send=before_mutation,
                                        json={'accountId': account_id, 'contentId': post_id, 'config': wanted})
             except Exception as exc:
                 definite = isinstance(exc, MutationNotSent) or isinstance(exc, ReplizError) and exc.status in {400, 401, 403, 404, 422, 429}
