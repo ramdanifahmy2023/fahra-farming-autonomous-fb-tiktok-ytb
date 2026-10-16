@@ -1,5 +1,7 @@
 # Rencana implementasi paket Fahra Automation
 
+Arsip rancangan paket awal yang sudah dilaksanakan bertahap. Permintaan audit setelah aktivasi 16 Oktober 2026 menghasilkan [rencana perbaikan berikutnya](IMPROVEMENT_PLAN.md); rencana baru itu belum menjadi implementasi yang disetujui.
+
 Status rancangan awal 16 Oktober 2026; pelaksanaan aktual ada di memory/worklog. Perubahan pengguna berikutnya: render tanpa mirror dan caption publik mencantumkan akun Instagram sumber. Keputusan pengguna: satu link menuju tiga platform, maksimal 20 video per akun/hari WIB, akun baru otomatis ikut rotasi, paket menggantikan dua workflow lama setelah uji lulus.
 
 ## Alur yang dibangun

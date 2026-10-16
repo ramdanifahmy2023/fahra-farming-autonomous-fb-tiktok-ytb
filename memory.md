@@ -1,5 +1,7 @@
 # Memori proyek
 
+Permintaan terbaru 16 Oktober 2026: audit project repost dan fokus plan dahulu. Hasil ada di [audit setelah aktivasi](docs/AUDIT_IMPROVEMENT_20261016.md) dan [rencana perbaikan](docs/IMPROVEMENT_PLAN.md). Jangan meneruskan persetujuan implementasi paket awal sebagai persetujuan otomatis untuk temuan baru A01 sampai A11. Audit membaca produksi pada 15:14 sampai 15:17 WIB dan menjalankan fixture terisolasi; kode/config/DB/layanan produksi tidak diubah oleh tugas audit. Snapshot menunjukkan sembilan delivery dari tiga sumber paket baru: empat published, empat failed, satu scheduled. Tiga kegagalan berasal dari satu video 480×854; satu Facebook gagal dengan pesan objek/izin yang belum dipastikan penyebabnya. Jurnal yang belum pasti tetap tidak diulang.
+
 Diperbarui 16 Oktober 2026 sekitar 15:06 WIB. Kode produksi pada main 8921956 sudah dipush; 334/334 tes tanpa skip, preview nyata, serta CI branch/main lulus. Font hook baru sudah terpasang pada worker PID 26788, dengan Pillow 12.3.0. Snapshot lengkap 64 akun, paused=false, reply aktif kembali setelah startup; kedua layanan lama tetap unloaded. Gaya baru berlaku untuk render berikutnya, bukan revisi video yang sudah dijadwalkan/terbit. Bukti terbaru: runtime/verification/hook-visual-20261016/. Pilot tiga platform, tanpa mirror, kredit Instagram, cleanup dan cutoff sebelumnya tetap berlaku.
 
 ## Keputusan yang tidak perlu ditanyakan ulang
