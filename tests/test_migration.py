@@ -217,3 +217,40 @@ class MigrationTests(unittest.TestCase):
         with self.store.connect() as c:
             self.assertEqual(c.execute('SELECT id FROM external_schedules').fetchone()[0],'doctor-external')
             self.assertEqual(c.execute('SELECT count(*) FROM jobs').fetchone()[0],0)
+
+    def legacy_failed_job(self, submission=None, schedule_id=None):
+        source=next(s for s in self.manifest['sources'] if s['origin']=='tiktok')
+        path=self.root/source['file']
+        payload={'resume_status':'downloaded','source_path':'/legacy/tiktok/source.mp4','submission':submission}
+        with closing(sqlite3.connect(path)) as c:
+            c.execute("UPDATE jobs SET status='failed',payload=?,schedule_id=?,counts_quota=0 WHERE id=?",
+                      (json.dumps(payload),schedule_id,self.original_ids['tiktok']))
+            c.commit()
+        source['sha256']=digest_file(path)
+        (self.root/'manifest.json').write_text(json.dumps(self.manifest))
+
+    def test_failed_legacy_media_waits_for_manual_retry_then_resumes_checkpoint(self):
+        self.legacy_failed_job()
+        import_snapshots(self.store,self.root)
+        jid=self.original_ids['tiktok']
+        job=self.store.job(jid)
+        asset=self.store.asset(job['asset_id'])
+        self.assertEqual(job['status'],'failed')
+        self.assertEqual(asset['status'],'downloaded')
+        self.assertEqual(asset['payload']['legacy_status'],'failed')
+        self.assertEqual(asset['payload']['source_path'],'/legacy/tiktok/source.mp4')
+        self.store.set('paused',False)
+        self.assertIsNone(self.store.claim())
+        self.assertTrue(self.store.retry(jid))
+        resumed=self.store.claim()
+        self.assertEqual((resumed['id'],resumed['status']),(jid,'downloaded'))
+        self.assertEqual(self.store.asset(resumed['asset_id'])['status'],'downloaded')
+
+    def test_failed_legacy_with_uncertain_intent_remains_held(self):
+        self.legacy_failed_job(submission={'accountId':'tiktok-account'},schedule_id='remote-uncertain')
+        import_snapshots(self.store,self.root)
+        jid=self.original_ids['tiktok']
+        job=self.store.job(jid)
+        self.assertEqual(self.store.asset(job['asset_id'])['status'],'failed')
+        self.assertEqual(job['status'],'failed')
+        self.assertFalse(self.store.retry(jid))

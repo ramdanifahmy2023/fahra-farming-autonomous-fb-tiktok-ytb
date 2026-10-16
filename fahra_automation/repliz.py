@@ -249,8 +249,14 @@ class Repliz:
         metadata = job['payload'].get('delivery_metadata')
         if not isinstance(metadata, dict) or metadata.get('account_id') != job['account_id'] or metadata.get('platform') != platform:
             raise ConfigurationError('Metadata persona belum terikat pada akun tujuan.')
-        title = metadata.get('title', '').strip()
-        if not title or len(title) > 100 or any(ch in title for ch in '<>\n\r'):
+        title = metadata.get('title')
+        if title is None or isinstance(title, str) and not title.strip():
+            generated = job['payload'].get('generated', {})
+            hook = generated.get('hook') if isinstance(generated, dict) else None
+            title = hook.strip()[:100] if platform in {'tiktok', 'facebook'} and isinstance(hook, str) else ''
+        elif isinstance(title, str):
+            title = title.strip()
+        if not isinstance(title, str) or not title or len(title) > 100 or any(ch in title for ch in '<>\n\r'):
             raise ValueError('Judul video harus 1–100 karakter tanpa tag/baris baru.')
         hashtags = metadata.get('hashtags', [])
         if not isinstance(hashtags, list) or any(not isinstance(tag, str) or not tag.startswith('#') for tag in hashtags):

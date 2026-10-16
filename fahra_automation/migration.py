@@ -10,6 +10,7 @@ from contextlib import closing
 from pathlib import Path
 
 from .config import ConfigurationError, allowed_account
+from .db import PREPARE
 from .reply_store import ReplyStore
 from .scheduler import offset_for
 from .util import digest_file, iso
@@ -120,6 +121,12 @@ def import_snapshots(store, folder):
                 payload = json.loads(asset['payload'])
                 payload['legacy_origin'] = origin
                 payload['legacy_source_id'] = asset['source_id']
+                if origin == 'tiktok' and not data['assets'] and asset['status'] == 'failed':
+                    legacy_job = next(job for job in data['jobs'] if job['id'] == asset['id'])
+                    resume = payload.get('resume_status')
+                    if isinstance(resume,str) and resume in PREPARE and not payload.get('submission') and not legacy_job.get('schedule_id'):
+                        payload['legacy_status'] = asset['status']
+                        asset['status'] = resume
                 asset.update(source_id='legacy:' + origin + ':' + asset['source_id'], payload=json.dumps(payload,ensure_ascii=False),
                              required_destinations=json.dumps(defaults), leased_job_id=None)
                 insert(connection,'assets',asset)

@@ -164,6 +164,31 @@ class ReplizContractTest(unittest.IsolatedAsyncioTestCase):
         remote.pages = AsyncMock(return_value=[{**body, 'id': x, 'status': 'pending'} for x in ('s1', 's2')])
         with self.assertRaises(RuntimeError): await remote.reconcile(job)
 
+    def test_tiktok_facebook_blank_title_uses_shared_hook(self):
+        for platform in ('tiktok', 'facebook'):
+            for title in ('', '  ', None):
+                with self.subTest(platform=platform, title=title):
+                    job = metadata_job(platform)
+                    job['payload']['generated'] = {'hook': '  Kucing penasaran  '}
+                    job['payload']['delivery_metadata']['title'] = title
+                    self.assertEqual(Repliz.payload(job, now())['title'], 'Kucing penasaran')
+            job['payload']['delivery_metadata'].pop('title')
+            job['payload']['generated']['hook'] = 'a' * 101
+            self.assertEqual(Repliz.payload(job, now())['title'], 'a' * 100)
+            job['payload']['delivery_metadata']['title'] = 'Judul persona'
+            self.assertEqual(Repliz.payload(job, now())['title'], 'Judul persona')
+
+    def test_youtube_requires_explicit_title_despite_shared_hook(self):
+        for title in ('', '  ', None):
+            job = metadata_job('youtube')
+            job['payload']['generated'] = {'hook': 'Kucing penasaran'}
+            job['payload']['delivery_metadata']['title'] = title
+            with self.subTest(title=title), self.assertRaises(ValueError):
+                Repliz.payload(job, now())
+        job['payload']['delivery_metadata'].pop('title')
+        with self.assertRaises(ValueError):
+            Repliz.payload(job, now())
+
     async def test_unique_marker_can_reconcile_remote_reschedule_and_legacy_title(self):
         body = Repliz.payload(metadata_job(), now())
         moved = {**copy.deepcopy(body), 'scheduleAt': iso(now() + timedelta(days=1))}
