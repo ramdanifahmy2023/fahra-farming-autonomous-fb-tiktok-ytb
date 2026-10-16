@@ -40,6 +40,25 @@ class ReplyStore:
             if 'leased' not in {r[1] for r in c.execute('PRAGMA table_info(comment_events)')}:
                 c.execute('ALTER TABLE comment_events ADD COLUMN leased INTEGER NOT NULL DEFAULT 0')
 
+    def enroll_accounts(self, account_ids=None, *, enable=False):
+        with self.store.tx() as c:
+            stamp = iso()
+            since = self.store.setting(c, 'reply_since') or stamp
+            previous = self.store.setting(c, 'reply_account_ids', [])
+            cutoffs = self.store.setting(c, 'reply_account_since', {})
+            # Preserve migrated cutoffs before replacing even an empty/disconnected inventory.
+            for identity in previous:
+                cutoffs.setdefault(identity, since)
+            current = sorted(set(previous if account_ids is None else account_ids))
+            for identity in current:
+                cutoffs.setdefault(identity, stamp)
+            self.store.put_setting(c, 'reply_account_since', cutoffs)
+            self.store.put_setting(c, 'reply_account_ids', current)
+            if enable:
+                self.store.put_setting(c, 'reply_since', since)
+                self.store.put_setting(c, 'reply_enabled', True)
+        return {'accounts': len(current), 'since': since}
+
     def recover(self):
         with self.store.tx() as c:
             c.execute("UPDATE comment_events SET status='queued' WHERE status='processing'")

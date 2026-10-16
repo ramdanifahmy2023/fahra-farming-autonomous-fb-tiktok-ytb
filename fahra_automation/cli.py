@@ -302,9 +302,9 @@ def main():
             if args.action != 'status':
                 if args.action == 'resume':
                     config.require_live_action()
-                    if not store.get('reply_since'):
-                        store.set('reply_since',iso())
-                store.set('reply_enabled',args.action == 'resume')
+                    replies.enroll_accounts(enable=True)
+                else:
+                    store.set('reply_enabled',False)
                 store.record('reply_operator_state',enabled=args.action == 'resume')
             output(replies.summary())
         elif args.command == "init":

@@ -91,14 +91,9 @@ class ReplyWorker:
         approved = {a['id'] for a in self.store.eligible_accounts()}
         self.own_ids = {str(a['generatedId']) for a in all_accounts if a.get('generatedId')}
         self.accounts = {object_id(a): a for a in all_accounts if allowed_account(a) and object_id(a) in approved and a.get('isConnected')}
-        cutoffs = self.store.get('reply_account_since', {})
-        previous = set(self.store.get('reply_account_ids', []))
+        self.db.enroll_accounts(self.accounts)
         for identity, account in self.accounts.items():
-            if identity not in cutoffs:
-                cutoffs[identity] = self.store.get('reply_since') if identity in previous else iso()
             self.personas.bind(identity, account['type'])
-        self.store.set('reply_account_since', cutoffs)
-        self.store.set('reply_account_ids', sorted(self.accounts))
         return self.accounts
 
     async def ingest(self):
@@ -471,14 +466,10 @@ def main():
                     ids = [object_id(a) for a in accounts if allowed_account(a) and a.get('isConnected') and object_id(a) in eligible]
                     if not ids:
                         raise ValueError('Tidak ada akun target.')
-                    since = store.get('reply_since') or iso()
                     # Verify read access before enabling. Historical comments are marked on first poll.
                     await api.request('GET', '/public/comment', params=[('page', '1'), ('limit', '1')] + [('accountIds', a) for a in ids])
-                    with store.tx() as c:
-                        store.put_setting(c, 'reply_since', since)
-                        store.put_setting(c, 'reply_account_ids', ids)
-                        store.put_setting(c, 'reply_enabled', True)
-                        store.event(c, 'reply_activated', accounts=len(ids), since=since)
+                    enrollment = db.enroll_accounts(ids, enable=True)
+                    store.record('reply_activated', **enrollment)
                 finally:
                     await api.close()
             asyncio.run(activate())

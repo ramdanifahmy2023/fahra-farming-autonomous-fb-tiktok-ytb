@@ -79,6 +79,6 @@ Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada c
 
 ## Kendali reply dan batch
 
-Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk worker komentar. Saat migrasi, jangan memakai CLI sekunder dari modul replies untuk resume; jalur utama mempertahankan registry dan cutoff akun lama, lalu inventory worker memberi cutoff baru untuk akun tambahan. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
+Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk operasi rutin. Kedua jalur CLI dan inventory memakai pencatatan cutoff yang sama: akun migrasi mempertahankan tanggal lamanya, akun baru memakai waktu bergabung, dan reconnect tidak menggeser cutoff. CLI sekunder pada modul replies tetap memiliki preflight GET dan perintah activate untuk aktivasi pertama. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
 
 Batch mendukung maksimal 100 link per pesan, backlog 1.000 asset pending, dengan rotasi yang berlanjut antarbatch/restart. Batas tersebut terpisah dari kuota 20 video per akun per hari WIB.
