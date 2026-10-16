@@ -157,3 +157,12 @@ class OperationTests(unittest.TestCase):
         with patch('fahra_automation.ownership.legacy_services',return_value=[{'loaded':True}]):
             with self.assertRaises(ConfigurationError):
                 verify_ownership(self.config)
+
+    def test_fixture_runtime_never_uses_production_journal_on_main_checkout(self):
+        (self.root/'.git').mkdir()
+        self.config.data['workflow']['runtime_dir']='fixture-runtime'
+        self.config.data['workflow']['journal_dir']='production-journal'
+        with patch('fahra_automation.journal.CODE_ROOT',self.root):
+            isolated=AttemptJournal(self.config)
+        self.assertEqual(isolated.root,self.root/'fixture-runtime/attempts')
+        self.assertFalse((self.root/'production-journal').exists())

@@ -20,8 +20,10 @@ class AttemptBlocked(ConfigurationError):
 
 class AttemptJournal:
     def __init__(self, config):
-        self.root = (config.runtime / 'attempts' if config.root.resolve() != CODE_ROOT or (config.root / '.git').is_file()
-                     else config.path(config.section('workflow').get('journal_dir', 'runtime/attempts')))
+        production_runtime = (config.root.resolve() == CODE_ROOT and (config.root / '.git').is_dir()
+                              and config.runtime.resolve() == CODE_ROOT / 'runtime')
+        self.root = (config.path(config.section('workflow').get('journal_dir', 'runtime/attempts'))
+                     if production_runtime else config.runtime / 'attempts')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     def folder(self, action_id):
