@@ -1,0 +1,24 @@
+# Akses dan konfigurasi mesin
+/Credential/
+/credentials/
+/config.local.*
+.env
+.env.*
+!.env.example
+# Data kerja dan media
+/runtime/
+/Bank-konten-fahra-automation-tiktok-ig-fb-ytb/
+/downloads/
+/cache/
+*.sqlite3*
+*.db*
+*.mp4
+*.mov
+*.wav
+# Lingkungan lokal
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+._*
