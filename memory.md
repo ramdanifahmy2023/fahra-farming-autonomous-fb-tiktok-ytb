@@ -4,6 +4,8 @@ Diperbarui 16 Oktober 2026 sekitar 14:07 WIB. Kode produksi pada main 504b83b su
 
 ## Keputusan yang tidak perlu ditanyakan ulang
 
+Permintaan terbaru: perbaiki font dan visual hook. Kode renderer baru memakai `barlow-balanced-v1`: Barlow Semi Condensed Bold, baris seimbang, kartu gelap ringkas di bagian atas, ukuran mengikuti video. Sampling 30 fps dilakukan sebelum overlay. Rincian dan batasnya ada di [HOOK_VISUAL.md](docs/HOOK_VISUAL.md); pemeriksaan pemasangan terbaru dicatat pada worklog dan `runtime/verification/hook-visual-20261016/final-git.json` setelah penutupan. Video lama tidak diposting ulang untuk mengganti tampilan.
+
 1. Paket berada di `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader`, repo privat fahra-farming-autonomous-fb-tiktok-ytb.
 2. Bot Telegram berbeda: @Fahra_autonomousbot. Credential ada pada folder Credential proyek ini, bukan menggunakan token dua bot lama.
 3. Satu link Reel baru menuju satu akun TikTok, satu Facebook Page, dan satu channel YouTube Shorts. Satu asset dipakai tiga delivery; keberhasilan sebagian tidak boleh mengulang tujuan yang sudah terbit. Histori/pending legacy tetap mempunyai tujuan asli, tanpa backfill otomatis ke platform lain.

@@ -5,6 +5,7 @@ import argparse
 import ast
 import base64
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -24,6 +25,10 @@ SECRET_PATTERNS = {
     'secret-assignment': r'''(?i)\b(?:api[_ -]?key|access[_ -]?key|secret[_ -]?key|access[_ ]?token|refresh[_ ]?token|client[_ ]?secret|password)["']?\s*[:=]\s*["']?([A-Za-z0-9_./+:-]{20,})''',
 }
 FORBIDDEN_PARTS = {'credential', 'credentials', 'runtime', 'audit', 'bank konten', 'bank konten-fb-ytb', 'bank-konten-fahra-automation-tiktok-ig-fb-ytb', '.venv', '__pycache__'}
+VETTED_BINARY_ASSETS = {
+    'fahra_automation/assets/fonts/BarlowSemiCondensed-Bold.ttf':
+        '5bd6757e459a110da81b44532f0f43058e2dab2401688abca84f2fdbde193cbb',
+}
 
 
 def git(root, *args):
@@ -99,40 +104,59 @@ def secret_issues(name, text, secrets):
 
 
 def repository_files(root):
-    return sorted(paths(git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z')))
+    return sorted(paths(git(root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'))
+                  | VETTED_BINARY_ASSETS.keys())
+
+
+def scan_blob(name, raw, secrets, expected_digest=None, *, index=False):
+    label = name + ' (index)' if index else name
+    if len(raw) > 2_000_000:
+        return [{'file': label, 'rule': 'file-lebih-dari-2mb'}], None
+    if expected_digest is not None:
+        if hashlib.sha256(raw).hexdigest() != expected_digest:
+            return [{'file': label, 'rule': 'aset-biner-hash-tidak-cocok'}], None
+        return [], None
+    try:
+        source = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return [{'file': label, 'rule': 'index-bukan-teks' if index else 'file-bukan-teks'}], None
+    issues = [{'file': label, 'rule': 'nul-di-file-teks'}] if '\0' in source else []
+    return issues + secret_issues(label, source, secrets), source
 
 
 def scan_files(root, names, secrets):
     issues, contents = [], {}
     for name in names:
         path = root / name
+        expected_digest = VETTED_BINARY_ASSETS.get(name)
         if any(part.casefold() in FORBIDDEN_PARTS for part in Path(name).parts) or path.name in {'config.local.toml', 'repliz.md'} or path.name.startswith('.env'):
             issues.append({'file': name, 'rule': 'file-lokal-terlarang-di-git'})
             continue
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
             issues.append({'file': name, 'rule': 'symlink-tidak-diperiksa'})
-            continue
-        if path.exists():
-            if path.stat().st_size > 2_000_000:
-                issues.append({'file': name, 'rule': 'file-lebih-dari-2mb'})
-                continue
-            try:
-                contents[name] = path.read_text(encoding='utf-8')
-            except UnicodeDecodeError:
-                issues.append({'file': name, 'rule': 'file-bukan-teks'})
-                continue
-            if '\0' in contents[name]:
-                issues.append({'file': name, 'rule': 'nul-di-file-teks'})
-            issues += secret_issues(name, contents[name], secrets)
+        elif path.exists():
+            with path.open('rb') as source_file:
+                raw = source_file.read(2_000_001)
+            working_issues, source = scan_blob(name, raw, secrets, expected_digest)
+            issues += working_issues
+            if source is not None:
+                contents[name] = source
+        elif expected_digest is not None:
+            issues.append({'file': name, 'rule': 'aset-biner-wajib-hilang'})
         # Inspect the index too: a secret removed in the working copy may still be staged.
         try:
-            staged = git(root, 'show', ':' + name).decode('utf-8')
+            staged = git(root, 'show', ':' + name)
         except subprocess.CalledProcessError:
+            if expected_digest is not None:
+                try:
+                    git(root, 'cat-file', '-e', 'HEAD:' + name)
+                except subprocess.CalledProcessError:
+                    pass
+                else:
+                    issues.append({'file': name + ' (index)', 'rule': 'aset-biner-index-hilang'})
             continue
-        except UnicodeDecodeError:
-            issues.append({'file': name, 'rule': 'index-bukan-teks'})
-            continue
-        issues += secret_issues(name + ' (index)', staged, secrets)
+        staged_issues, _ = scan_blob(name, staged, secrets, expected_digest, index=True)
+        issues += staged_issues
     return issues, contents
 
 

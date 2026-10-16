@@ -1,4 +1,5 @@
 import copy
+import json
 import tempfile
 import unittest
 from contextlib import asynccontextmanager
@@ -18,10 +19,12 @@ GOOD = {'duration': 30, 'width': 1080, 'height': 1920, 'codec': 'h264', 'audio':
 class MediaTest(unittest.TestCase):
     def test_render_filter_keeps_original_orientation_zoom_and_hook_timing(self):
         media = Media(Config.load())
-        vf = media.render_filter(720, 1280, '/tmp/fixture-render')
-        self.assertTrue(vf.startswith('scale=792:1408,crop=720:1280:(iw-ow)/2:(ih-oh)/2,setsar=1,'))
+        vf = media.render_filter(720, 1280)
+        self.assertTrue(vf.startswith('[0:v]scale=792:1408,crop=720:1280:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[base];'))
         self.assertIn("enable='lt(t,3)'", vf)
-        self.assertIn('textfile=/tmp/fixture-render/hook.txt:expansion=none:', vf)
+        self.assertIn('[base][1:v]overlay=x=0:y=0:eof_action=repeat:', vf)
+        self.assertLess(vf.index('fps=30'), vf.index('overlay='))
+        self.assertTrue(vf.endswith('[video]'))
         for transformation in ('hflip', 'vflip', 'transpose', 'rotate'):
             self.assertNotIn(transformation, vf)
 
@@ -38,6 +41,64 @@ class MediaTest(unittest.TestCase):
                       {'fps': 23}, {'size': 1_000_000_001}):
             with self.subTest(patch=patch), self.assertRaises(ValueError):
                 Media.validate_delivery({**GOOD, **patch}, 'youtube')
+
+    def test_render_maps_overlay_and_optional_original_audio_without_changing_generated_text(self):
+        generated = {'hook': 'Café: 100% seru!', 'caption': 'Kucing penasaran.'}
+        original = copy.deepcopy(generated)
+        for audio in (True, False):
+            with self.subTest(audio=audio), tempfile.TemporaryDirectory() as folder:
+                target = Path(folder) / 'final.mp4'
+                media = Media(Config.load())
+                info = {**GOOD, 'audio': audio, 'audio_codec': 'aac' if audio else None}
+                media.probe = Mock(side_effect=[info, info])
+
+                def run(command, **kwargs):
+                    if command[1] == 'cp' and command[-2].endswith('/final.mp4'):
+                        Path(command[-1]).write_bytes(b'new verified render')
+                    return ''
+
+                media.run = Mock(side_effect=run)
+                self.assertEqual(media.render(Path(folder) / 'source.mp4', target, generated, 'asset-fixture'), info)
+                commands = [call.args[0] for call in media.run.call_args_list]
+                command = next(command for command in commands if 'ffmpeg' in command)
+                maps = [command[index + 1] for index, value in enumerate(command) if value == '-map']
+                self.assertEqual(maps, ['[video]', '0:a:0?'])
+                self.assertIn('/tmp/fahra_automation-render-asset-fixture/hook.png', command)
+                self.assertEqual(command[command.index('-c:v') + 1], 'libx264')
+                self.assertEqual(command[command.index('-c:a') + 1], 'aac')
+                self.assertEqual(command[command.index('-pix_fmt') + 1], 'yuv420p')
+                self.assertNotIn('-shortest', command)
+                self.assertIn('title=' + generated['hook'], command)
+                self.assertIn('comment=' + generated['caption'], command)
+                self.assertEqual(target.read_bytes(), b'new verified render')
+                self.assertFalse(target.with_suffix('.partial.mp4').exists())
+                layout = json.loads((target.parent / 'hook-layout.json').read_text())
+                self.assertEqual((target.parent / 'hook.txt').read_text(), '\n'.join(layout['lines']))
+                self.assertEqual(generated, original)
+
+    def test_render_failure_or_invalid_result_never_replaces_existing_final(self):
+        for failure in ('ffmpeg', 'probe'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as folder:
+                target = Path(folder) / 'final.mp4'
+                target.write_bytes(b'previous verified render')
+                media = Media(Config.load())
+                media.probe = Mock(side_effect=[GOOD, {**GOOD, 'duration': 1}])
+
+                def run(command, **kwargs):
+                    if 'ffmpeg' in command and failure == 'ffmpeg':
+                        raise RuntimeError('fixture encode failed')
+                    if command[1] == 'cp' and command[-2].endswith('/final.mp4'):
+                        Path(command[-1]).write_bytes(b'invalid new render')
+                    return ''
+
+                media.run = Mock(side_effect=run)
+                with self.assertRaises((RuntimeError, ValueError)):
+                    media.render(Path(folder) / 'source.mp4', target,
+                                 {'hook': 'Kucing penasaran', 'caption': 'Kucing melihat kardus.'}, 'asset-fixture')
+                self.assertEqual(target.read_bytes(), b'previous verified render')
+                cleanup = media.run.call_args.args[0]
+                self.assertIn('python', cleanup)
+                self.assertEqual(cleanup[-1], '/tmp/fahra_automation-render-asset-fixture')
 
 
 class DownloaderTest(unittest.IsolatedAsyncioTestCase):

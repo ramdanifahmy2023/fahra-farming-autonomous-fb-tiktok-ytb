@@ -96,6 +96,39 @@ class CaptionTest(unittest.IsolatedAsyncioTestCase):
         trace = json.loads((self.folder / "caption-review.json").read_text())
         self.assertEqual(len(trace["attempts"]), 2)
 
+    async def test_new_shared_hook_repairs_unsupported_glyph_or_overflow_once_with_same_evidence(self):
+        for stage in ('observe', 'write'):
+            for text in ('Kucing 😊', 'W' * 60):
+                with self.subTest(stage=stage, hook=text):
+                    bad = {**self.good, 'hook': text}
+                    responses = [bad, self.good, self.good] if stage == 'observe' else [self.good, bad, self.good]
+                    result, requests = await self.invoke(responses)
+                    self.assertEqual(len(requests), 3)
+                    self.assertEqual(result['generated']['hook'], self.good['hook'])
+                    self.assertEqual(result['caption_review']['confidence'], self.good['confidence'])
+                    self.assertEqual(result['caption_review']['observations'], self.good['observations'])
+                    failed_index = 0 if stage == 'observe' else 1
+                    self.assertEqual(requests[failed_index]['messages'][:2], requests[failed_index + 1]['messages'][:2])
+                    repair = requests[failed_index + 1]['messages'][-1]['content']
+                    self.assertIn('Perbaiki JSON/gaya sekali', repair)
+                    trace = json.loads((self.folder / 'caption-review.json').read_text())
+                    self.assertTrue(trace['attempts'][failed_index]['issues'])
+                    self.assertEqual(trace['attempts'][failed_index + 1]['issues'], [])
+                    self.assertEqual(trace['attempts'][failed_index + 1]['attempt'], 2)
+
+    async def test_new_shared_hook_stops_after_one_failed_repair_in_either_stage(self):
+        for stage in ('observe', 'write'):
+            with self.subTest(stage=stage):
+                bad = {**self.good, 'hook': 'Kucing 😊'}
+                responses = [bad, bad] if stage == 'observe' else [self.good, bad, bad]
+                with self.assertRaisesRegex(ValueError, 'setelah satu perbaikan'):
+                    await self.invoke(responses)
+                trace = json.loads((self.folder / 'caption-review.json').read_text())
+                self.assertEqual(len(trace['attempts']), len(responses))
+                attempts = [entry for entry in trace['attempts'] if entry['stage'] == stage]
+                self.assertEqual([entry['attempt'] for entry in attempts], [1, 2])
+                self.assertTrue(all(entry['issues'] for entry in attempts))
+
     async def test_low_confidence_does_not_retry_into_false_certainty(self):
         with self.assertRaises(LowConfidenceError):
             await self.invoke([{**self.good, "confidence": .3}])

@@ -85,6 +85,8 @@ Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada c
 
 ## Kendali reply dan batch
 
+Renderer hook memakai Pillow dari `requirements.lock` dan font Barlow yang ikut paket. Setelah pembaruan dependency, pasang `.venv/bin/python -m pip install -r requirements.lock` sebelum restart. Pemeriksaan tampilan harus memakai render terisolasi tanpa publikasi, termasuk sumber 60 fps dan frame output 89/90 pada 30 fps. `hook-layout.json` mencatat gaya dan ukuran setiap render. Lihat [HOOK_VISUAL.md](docs/HOOK_VISUAL.md); jangan menghapus lisensi font atau mengganti hash verifier tanpa audit sumber font.
+
 Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk operasi rutin. Sakelar reply dibaca dari SQLite. Sesudah mengubah config.local.toml, restart service agar konfigurasi seluruh komponen diterapkan konsisten. Sebagian nilai dibaca ulang oleh loop, tetapi klien dan objek yang sudah dibuat tidak semuanya diperbarui. Restart juga wajib setelah perubahan kode atau kredensial klien. Kedua jalur CLI dan inventory memakai pencatatan cutoff yang sama: akun migrasi mempertahankan tanggal lamanya, akun baru memakai waktu bergabung, dan reconnect tidak menggeser cutoff. CLI sekunder pada modul replies tetap memiliki preflight GET dan perintah activate untuk aktivasi pertama. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
 
 Batch mendukung maksimal 100 link per pesan, backlog 1.000 asset pending, dengan rotasi yang berlanjut antarbatch/restart. Batas tersebut terpisah dari kuota 20 video per akun per hari WIB.

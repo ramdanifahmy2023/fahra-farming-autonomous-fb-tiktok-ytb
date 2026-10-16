@@ -10,6 +10,7 @@ import httpx
 
 from .config import ConfigurationError
 from .captioning import DELIVERY_PROMPT, EDITOR_PROMPT, POLICY_VERSION, SYSTEM_PROMPT, editorial_issues
+from .hook import layout_hook
 
 
 class LowConfidenceError(ValueError):
@@ -98,6 +99,8 @@ class Analyzer:
                     if stage == "write" and isinstance(data, dict):
                         data["confidence"] = evidence["confidence"]
                     generated = self.validate(data)
+                    # Repair new shared hooks here; delivery-only edits keep their already rendered hook.
+                    layout_hook(generated['hook'], 540, 960)
                     if stage == "observe":
                         if not isinstance(data.get("observations"), str) or not data["observations"].strip():
                             raise ValueError("Catat bukti konten pada observations sebelum menulis caption.")

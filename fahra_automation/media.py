@@ -4,9 +4,10 @@ import json
 import math
 import re
 import subprocess
-import textwrap
 from fractions import Fraction
 from pathlib import Path
+
+from .hook import create_hook
 
 
 class Media:
@@ -85,15 +86,13 @@ class Media:
                       "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(sound)])
         return frames, sound
 
-    def render_filter(self, width, height, scratch):
+    def render_filter(self, width, height):
         scaled_width = round(width * 1.1 / 2) * 2
         scaled_height = round(height * 1.1 / 2) * 2
-        size = max(20, round(width / 18))
-        return (f"scale={scaled_width}:{scaled_height},crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,"
-                "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:"
-                f"textfile={scratch}/hook.txt:expansion=none:fontsize={size}:fontcolor=white:"
-                f"borderw=2:bordercolor=black:box=1:boxcolor=black@0.45:boxborderw={size//3}:"
-                f"line_spacing=6:x=(w-tw)/2:y=h*0.68:enable='lt(t,{self.config.section('video')['hook_seconds']})'")
+        # Evaluate hook timing after resampling so 60 fps sources cannot repeat it past 3 seconds.
+        return (f"[0:v]scale={scaled_width}:{scaled_height},crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[base];"
+                "[base][1:v]overlay=x=0:y=0:eof_action=repeat:"
+                f"enable='lt(t,{self.config.section('video')['hook_seconds']})'[video]")
 
     def render(self, source, target, generated, job_id):
         info = self.probe(source)
@@ -102,17 +101,20 @@ class Media:
             raise ValueError('Identitas render tidak valid.')
         w, h = info["width"] // 2 * 2, info["height"] // 2 * 2
         target.parent.mkdir(parents=True, exist_ok=True)
-        hook = target.parent / "hook.txt"
-        hook.write_text("\n".join(textwrap.wrap(generated["hook"], width=25)), encoding="utf-8")
+        hook = target.parent / "hook.png"
+        layout = create_hook(generated['hook'], w, h, hook)
+        (target.parent / 'hook-layout.json').write_text(json.dumps(layout, ensure_ascii=False, indent=2) + '\n')
+        (target.parent / 'hook.txt').write_text('\n'.join(layout['lines']), encoding='utf-8')
         scratch = "/tmp/fahra_automation-render-" + job_id
         docker = [self.docker, "exec", self.container]
         self.run([*docker, "mkdir", "-p", scratch])
         try:
             self.run([self.docker, "cp", str(source), self.container + ":" + scratch + "/source.mp4"])
-            self.run([self.docker, "cp", str(hook), self.container + ":" + scratch + "/hook.txt"])
-            vf = self.render_filter(w, h, scratch)
+            self.run([self.docker, "cp", str(hook), self.container + ":" + scratch + "/hook.png"])
+            vf = self.render_filter(w, h)
             self.run([*docker, "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", scratch + "/source.mp4",
-                      "-map", "0:v:0", "-map", "0:a:0?", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+                      "-i", scratch + "/hook.png", "-filter_complex", vf,
+                      "-map", "[video]", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
                       "-crf", str(self.config.section("video")["crf"]), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
                       "-r", "30",
                       "-map_metadata", "-1", "-metadata", "title=" + generated["hook"],
