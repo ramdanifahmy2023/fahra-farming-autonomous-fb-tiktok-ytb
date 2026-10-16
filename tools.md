@@ -4,6 +4,8 @@ Root proyek: `/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-do
 
 ## Cakupan verifikasi terbaru
 
+Perbaikan cutoff komentar berikutnya memakai commit bd8cf6d; **289/289 tes tanpa skip PASS**, [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38859969482) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38860136976) success. Bukti merger/deployment: `runtime/verification/source-credit-20261016/reply-cutoff-deploy.json`.
+
 Checkpoint 16 Oktober setelah perubahan pengguna: commit 26c7731, **280/280 tes tanpa skip PASS**, verifier full lokal PASS, [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38858165665) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38858464310) success pada SHA yang sama. Preview nyata DbnsuCYybBP membuktikan orientasi tanpa mirror, zoom 110%, hook [0,3), seluruh checksum Drive cocok, serta kredit `source: @nopri.adi.16144` pada payload ketiga platform. Bukti: `runtime/verification/source-credit-20261016/`. Status pilot produksi dicatat di memory/worklog.
 
 ## Checkpoint implementasi sebelum perubahan orientasi
@@ -79,6 +81,6 @@ Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada c
 
 ## Kendali reply dan batch
 
-Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk operasi rutin. Kedua jalur CLI dan inventory memakai pencatatan cutoff yang sama: akun migrasi mempertahankan tanggal lamanya, akun baru memakai waktu bergabung, dan reconnect tidak menggeser cutoff. CLI sekunder pada modul replies tetap memiliki preflight GET dan perintah activate untuk aktivasi pertama. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
+Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk operasi rutin. Sakelar reply dibaca dari SQLite. Sesudah mengubah config.local.toml, restart service agar konfigurasi seluruh komponen diterapkan konsisten. Sebagian nilai dibaca ulang oleh loop, tetapi klien dan objek yang sudah dibuat tidak semuanya diperbarui. Restart juga wajib setelah perubahan kode atau kredensial klien. Kedua jalur CLI dan inventory memakai pencatatan cutoff yang sama: akun migrasi mempertahankan tanggal lamanya, akun baru memakai waktu bergabung, dan reconnect tidak menggeser cutoff. CLI sekunder pada modul replies tetap memiliki preflight GET dan perintah activate untuk aktivasi pertama. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
 
 Batch mendukung maksimal 100 link per pesan, backlog 1.000 asset pending, dengan rotasi yang berlanjut antarbatch/restart. Batas tersebut terpisah dari kuota 20 video per akun per hari WIB.

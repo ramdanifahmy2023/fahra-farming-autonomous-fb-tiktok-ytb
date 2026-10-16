@@ -190,18 +190,90 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
         actual["reply"]["text"] = "unwanted change"
         self.assertFalse(verify_config(actual, expected))
 
-    def test_content_readback_accepts_null_runtime_status_but_keeps_config_checks(self):
+    def test_content_readback_ignores_delete_reply_runtime_status_without_mutation(self):
         expected = merge_config({}, self.manager.patch, content=True)
+        for previous in (None, 'pending', 'success', 'error'):
+            for current in (None, 'pending', 'success', 'error'):
+                with self.subTest(previous=previous, current=current):
+                    before = copy.deepcopy(expected)
+                    before['delete']['status'] = previous
+                    before['reply']['status'] = current
+                    actual = copy.deepcopy(expected)
+                    actual['delete']['status'] = current
+                    actual['reply']['status'] = previous
+                    untouched = copy.deepcopy((actual, before))
+                    self.assertTrue(verify_config(actual, expected))
+                    self.assertTrue(verify_config(actual, before))
+                    self.assertEqual((actual, before), untouched)
+
+    def test_runtime_status_does_not_hide_policy_schema_or_nested_changes(self):
+        expected = merge_config({}, self.manager.patch, content=True)
+        changes = [
+            ('delete', 'isActive', False), ('delete', 'keywords', ['different keyword']),
+            ('delete', 'type', 'ai'), ('reply', 'isActive', True),
+            ('reply', 'delay', {'isActive': False, 'value': 11, 'type': 'second'}),
+            ('reply', 'condition', {'isActive': False, 'isExactMatch': False, 'keywords': [], 'status': 'pending'}),
+            ('reply', 'keyword', []), ('reply', 'unexpected', 'value'),
+            ('like', 'isActive', False), ('like', 'status', 'pending'),
+            ('message', 'status', 'success'), ('story', 'status', 'error'),
+        ]
+        for module, key, value in changes:
+            with self.subTest(module=module, field=key):
+                actual = copy.deepcopy(expected)
+                actual['delete']['status'] = 'pending'
+                actual['reply']['status'] = 'error'
+                actual[module][key] = value
+                self.assertFalse(verify_config(actual, expected))
         actual = copy.deepcopy(expected)
-        actual["delete"]["status"] = None
-        actual["reply"]["status"] = None
-        self.assertTrue(verify_config(actual, expected))
-        self.assertIn("status", actual["delete"])
-        actual["delete"]["status"] = "error"
+        del actual['reply']['delay']['value']
         self.assertFalse(verify_config(actual, expected))
-        actual["delete"]["status"] = None
-        actual["like"]["isActive"] = False
+        actual = copy.deepcopy(expected)
+        actual['delete'] = None
         self.assertFalse(verify_config(actual, expected))
+
+    async def test_existing_youtube_profile_runtime_changes_never_write(self):
+        account = {**self.account, 'type': 'youtube', 'isConnected': True}
+        config = custom_reply_config(account['config'], self.profile, 'youtube')
+        row = {'id': 'override1', 'accountId': account['id'], 'detail': {'id': 'post1'}, 'config': config}
+        self.api.pages = AsyncMock(side_effect=lambda *args: [copy.deepcopy(row)])
+        async def read_account(method, path, **kwargs):
+            self.assertEqual((method, path), ('GET', '/public/account/' + account['id']))
+            return copy.deepcopy(account)
+        self.api.request = AsyncMock(side_effect=read_account)
+        job = {'id': 'job1', 'status': 'published', 'account_id': account['id'], 'payload': {'post_id': 'post1'}}
+        for delete_status, reply_status in [('pending', 'pending'), ('success', 'error'), ('error', 'success')]:
+            config['delete']['status'] = delete_status
+            config['reply']['status'] = reply_status
+            self.assertEqual(await self.manager.ensure_post(job),
+                             {'verified': True, 'automation_id': 'override1', 'owner': 'custom'})
+        self.config.require_live_action.assert_not_called()
+        self.assertEqual([c.args[0] for c in self.api.request.call_args_list], ['GET'] * 3)
+        self.assertEqual(self.api.pages.await_count, 3)
+        self.assertFalse(config['like']['isActive'])
+        self.assertFalse(config['reply']['isActive'])
+
+    async def test_youtube_create_readback_pending_reconciles_without_second_write(self):
+        account = {**self.account, 'type': 'youtube', 'isConnected': True}
+        rows = []
+        async def request(method, path, **kwargs):
+            if method == 'GET':
+                self.assertEqual(path, '/public/account/' + account['id'])
+                return copy.deepcopy(account)
+            self.assertEqual((method, path), ('POST', '/public/automation'))
+            saved = copy.deepcopy(kwargs['json']['config'])
+            saved['delete']['status'] = saved['reply']['status'] = 'pending'
+            rows.append({'id': 'override1', 'accountId': account['id'], 'contentId': None,
+                         'detail': {'id': 'post1'}, 'config': saved})
+            return {'id': 'override1'}
+        self.api.request = AsyncMock(side_effect=request)
+        self.api.pages = AsyncMock(side_effect=lambda *args: copy.deepcopy(rows))
+        job = {'id': 'job1', 'status': 'published', 'account_id': account['id'], 'payload': {'post_id': 'post1'}}
+        self.assertTrue((await self.manager.ensure_post(job))['verified'])
+        rows[0]['config']['delete']['status'] = 'error'
+        rows[0]['config']['reply']['status'] = 'success'
+        self.assertTrue((await self.manager.ensure_post(job))['verified'])
+        self.assertEqual([c.args[0] for c in self.api.request.call_args_list], ['GET', 'POST', 'GET'])
+        self.assertEqual(len(rows), 1)
 
     async def test_repliz_204_does_not_raise_json_error(self):
         transport = httpx.MockTransport(lambda request: httpx.Response(204))

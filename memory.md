@@ -1,6 +1,6 @@
 # Memori proyek
 
-Diperbarui 16 Oktober 2026 sekitar 13:00 WIB. Perubahan tanpa mirror dan kredit sumber sudah terpasang pada main, commit 26c7731; 280/280 tes tanpa skip serta CI branch/main lulus. Migrasi final dan ownership aktif; dua layanan lama tetap bootout dan disabled persisten. Layanan baru id.fahra.automation.social telah direstart. **Pilot Reel DbnsuCYybBP dari Telegram nyata sedang diproses, paused=false, dengan gate satu sumber. Reply dan cleanup masih nonaktif sampai tiga publikasi terverifikasi.** Bukti terbaru: runtime/verification/source-credit-20261016/.
+Diperbarui 16 Oktober 2026 sekitar 13:39 WIB. Kode produksi pada main bd8cf6d sudah dipush; 289/289 tes tanpa skip serta CI branch/main lulus. Perubahan tanpa mirror, kredit Instagram, dan cutoff komentar akun baru sudah terpasang. Dua layanan lama tetap bootout dan disabled; layanan baru id.fahra.automation.social berjalan. Pilot DbnsuCYybBP sudah terbit di ketiga platform, termasuk tab Shorts publik. Gate satu sumber masih aktif, paused=false, reply dan cleanup belum aktif. Bukti terbaru: runtime/verification/source-credit-20261016/.
 
 ## Keputusan yang tidak perlu ditanyakan ulang
 
@@ -32,7 +32,7 @@ Audit menemukan bug snapshot/kuota, tanggal jadwal, dedup hasil remote yang belu
 - Satu pemilik reply custom 9Router pada posting yang dikelola, native like/moderasi hanya jika platform mendukung dan hasil pilot terbukti. Default automasi calon akun baru disiapkan otomatis; capability yang belum terbukti tidak diaktifkan secara spekulatif.
 - Profil bersama awal 9:16, 3–90 detik untuk irisan dukungan ketiga adapter. Video lebih panjang/rasio lain memerlukan kebijakan adaptasi atau review; jangan diam-diam dipotong atau diterbitkan sebagai video YouTube biasa.
 
-Tahap berjalan: menyelesaikan pilot publikasi DbnsuCYybBP. Sumber sebelumnya DaLK4M_JU9W tetap ditahan deduplikasi karena memiliki pekerjaan legacy failed dengan jadwal Repliz; tidak dibuat ulang. Pengguna sudah membuka bot dan mengirim sumber baru pada 12:38 WIB. Onboarding dan kartu progres tercatat terkirim ke chat nyata; tidak perlu meminta Start atau link baru lagi. Rincian penerimaan ada di [ACCEPTANCE.md](docs/ACCEPTANCE.md).
+Tahap berjalan: menyelesaikan verifikasi profil komentar dan aktivasi setelah pilot publikasi DbnsuCYybBP lulus. Sumber sebelumnya DaLK4M_JU9W tetap ditahan deduplikasi karena memiliki pekerjaan legacy failed dengan jadwal Repliz; tidak dibuat ulang. Pengguna sudah membuka bot dan mengirim sumber baru pada 12:38 WIB. Onboarding dan kartu progres tercatat terkirim ke chat nyata; tidak perlu meminta Start atau link baru lagi. Rincian penerimaan ada di [ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
 ## Status migrasi aktual
 
@@ -41,3 +41,10 @@ Manifest final 03bf0b76ff714313a4d8c7cb99e0005d: 158 pekerjaan/aset lama (129 pu
 ## Pekerjaan berjalan: orientasi dan kredit sumber
 
 Pengguna mengirim Reel DbnsuCYybBP lewat bot baru: batch 63f40e1579474fc48888f20de204e81e, asset 55e8d6f3bd3b4211ac757399484aa12a, tiga delivery. Preview orientasi asli, zoom 110%, hook tiga detik, serta checksum Drive sudah PASS tanpa publikasi. Username sumber terverifikasi nopri.adi.16144. Kredit berada di caption/deskripsi publik, bukan tambahan overlay video. Produksi memproses pekerjaan Telegram asli secara mandiri; preview tidak dipromosikan menjadi posting. Status jadwal/publikasi harus dibaca dari DB dan Repliz sebelum dilaporkan.
+
+
+## Bukti pilot saat ini
+
+TikTok namira5751 terbit pada 13:13:02 WIB dengan post ID 7697144810318122261. Facebook Page Arunika terbit pada 13:24:13 WIB, post ID 113230217671155_1412797961067585, URL Reel publik 1445902694303604. Schedule, Content API, dan halaman publik cocok; kredit sumber terlihat. YouTube terbit 13:36:21 WIB dengan ID XVvnrT74448 di clara luna; Content API cocok dan video muncul pada tab Shorts/Terbaru publik. Ketiga notifikasi tautan Telegram sent=1, kartu batch message 4 done=1.
+
+Preview reply terisolasi pada video TikTok yang terbit memakai enam frame, model aktual gpt-6.1-sol, confidence 0,94. Contoh komentar fixture tentang helm menghasilkan jawaban faktual; context tidak memuat fakta mirror palsu. Tidak ada komentar uji dikirim dan cache/DB konteks produksi tidak berubah. Profil native dua posting pilot telah dibaca ulang: reply mati, like dan moderasi keyword aktif. Profil YouTube berhasil dibuat satu kali, ID 6ad1c63b0f680841e48bf22c, tetapi pembanding konfigurasi menolak tambahan status runtime pending. GET readback menunjukkan native reply/like=false dan moderasi keyword=true. Perbaikan pembanding sedang dikerjakan pada worktree profile-runtime-status; tidak melakukan create ulang. Worker reply tetap nonaktif sampai perbaikan dan rekonsiliasi profil lulus.

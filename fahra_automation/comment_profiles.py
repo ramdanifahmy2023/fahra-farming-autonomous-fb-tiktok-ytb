@@ -90,8 +90,8 @@ def merge_config(current, patch, content=False):
 def verify_config(actual, expected):
     def comparable(module, value):
         value = canonical(value)
-        # Content PUT adds null runtime status to these modules, outside the config schema.
-        if module in ("delete", "reply") and isinstance(value, dict) and value.get("status") is None:
+        # Repliz reports execution status here; it is not part of either module's policy.
+        if module in ("delete", "reply") and isinstance(value, dict):
             value.pop("status", None)
         return value
 

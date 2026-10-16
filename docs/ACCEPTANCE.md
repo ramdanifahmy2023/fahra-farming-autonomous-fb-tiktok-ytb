@@ -2,6 +2,20 @@
 
 Dokumen ini memuat kriteria penerimaan dan hasil yang sudah dibuktikan. Pada checkpoint implementasi 16 Oktober 2026, commit [54e4417](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/commit/54e4417d01b031b472f541a4492418dcbfe58d05) lulus seluruh 263 tes offline tanpa skip serta CI full pada [branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853332246) dan [main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853445793). CI sudah menguji source dan seluruh suite, bukan hanya dokumen seperti pada tahap audit awal. Seluruh matriks penerimaan belum dinyatakan selesai: preview dan rehearsal berikut belum menjadi bukti publikasi atau aksi komentar nyata.
 
+## Pemeriksaan terbaru: orientasi, kredit sumber, dan cutoff reply
+
+Kode produksi bd8cf6d lulus **289/289 tes tanpa skip**, verifier full lokal, [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38859969482) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38860136976). Pemeriksaan media tambahan memakai sumber Telegram nyata DbnsuCYybBP. Bukti orientasi/kredit/cutoff/reply berada di `runtime/verification/source-credit-20261016/`. Bukti migrasi final berada di `runtime/verification/implementation-20261016/final-validation.json` dan `final-reconcile.json`; hasil mirror pada checkpoint implementasi di bawah merupakan arsip versi sebelumnya.
+
+| Cakupan | Bukti terbaru | Batas bukti |
+| --- | --- | --- |
+| Media tanpa mirror dan Drive | Preview serta produksi mempertahankan orientasi sumber, zoom 110%, hook [0,3), audio asli, 720×1280, 16,5 detik, H.264/AAC. SHA-256 seluruh file produksi/Bank/Drive cocok: 373210961456085314d3015c41bd2ee4849a7846c012ed475b6da1d8c076c23f. Pemeriksaan frame dan payload ketiga schedule PASS | Histori render lama tidak ditulis ulang |
+| Kredit Instagram | Metadata pemilik terverifikasi nopri.adi.16144; payload ketiga platform memuat source: @nopri.adi.16144 tepat sekali sebelum hashtag | Username hilang/konflik menahan pengiriman; AI tidak menebak pemilik |
+| Cutoff akun reply | Sembilan regresi tambahan memeriksa akun migrasi, akun baru, dua CLI, snapshot kedaluwarsa, disconnect/reconnect dan enrollment bersamaan | Tes fixture membuktikan aturan cutoff, bukan pengiriman komentar nyata |
+| Konteks/draft reply | Preview terisolasi memakai enam frame produksi dan komentar fixture tentang helm: usable, confidence 0,94, model aktual gpt-6.1-sol, tanpa fakta mirror palsu. Empat belas pemeriksaan PASS | Nol request Repliz dan nol reply send; cache/DB konteks produksi tidak berubah |
+| Migrasi final dan ownership | Manifest 03bf0b76ff714313a4d8c7cb99e0005d, 158 jobs/assets, 541 komentar, 126 reply attempts, 22 konteks. Enam belas pemeriksaan baris penting PASS; missing active schedules dan journal unresolved nol. Dua layanan lama disabled, hanya owner baru aktif | Rollback operasional setelah mutasi nyata belum diuji penuh |
+
+Pilot DbnsuCYybBP sudah terbit di TikTok namira5751 (7697144810318122261), Facebook Arunika (113230217671155_1412797961067585, Reel publik 1445902694303604), dan YouTube clara luna (XVvnrT74448). Content API membuktikan kredit sumber ketiganya; Safari publik membuktikan ketiga halaman dan YouTube ada pada tab Shorts/Terbaru. Outbox tiga tautan sent=1 dan kartu batch done=1. Profil TT/FB dibaca ulang PASS; profil YouTube menunggu perbaikan pembanding status runtime pending. Reply/cleanup belum diaktifkan pada checkpoint ini. Seluruh matriks gangguan/beban/aksi komentar nyata tetap tidak diklaim PASS dari hasil suite.
+
 ## Hasil terverifikasi pada checkpoint implementasi
 
 Path berawalan `runtime/` di bawah relatif terhadap root proyek produksi. Path berlabel bukti pengembangan relatif terhadap salinannya di `runtime/verification/implementation-20261016/development-artifacts/`. Artefak runtime tidak masuk Git atau CI. Tabel ini mencatat checkpoint bukti; perkembangan cutover setelahnya dicatat di [memory.md](../memory.md) dan [worklog.md](../worklog.md).
@@ -19,7 +33,7 @@ Path berawalan `runtime/` di bawah relatif terhadap root proyek produksi. Path b
 
 Tabel skenario berikut tetap menjadi kontrak penerimaan. Status di atas hanya berlaku pada cakupan bukti yang disebut, bukan pernyataan bahwa semua skenario nyata sudah lulus.
 
-Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit akun Instagram sumber. Bukti mirror pada tabel di atas merupakan hasil versi sebelumnya; perubahan baru memerlukan preview tersendiri.
+Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit akun Instagram sumber. Bukti mirror pada tabel di atas merupakan hasil versi sebelumnya; Preview tanpa mirror dan kredit sumber sudah lulus sebagaimana bagian pemeriksaan terbaru.
 
 ## Fondasi, akun dan publikasi
 
