@@ -1,6 +1,6 @@
 # Memori proyek
 
-Diperbarui 16 Oktober 2026 sekitar 14:07 WIB. Kode produksi pada main 504b83b sudah dipush; 311/311 tes tanpa skip serta CI branch/main lulus. Perubahan tanpa mirror, kredit Instagram, dan cutoff komentar akun baru sudah terpasang. Dua layanan lama tetap bootout dan disabled; layanan baru id.fahra.automation.social berjalan. Pilot DbnsuCYybBP sudah terbit di ketiga platform, termasuk tab Shorts publik. Gate pilot sudah dibuka, paused=false, cleanup dan reply aktif. Bukti terbaru: runtime/verification/source-credit-20261016/.
+Diperbarui 16 Oktober 2026 sekitar 15:06 WIB. Kode produksi pada main 8921956 sudah dipush; 334/334 tes tanpa skip, preview nyata, serta CI branch/main lulus. Font hook baru sudah terpasang pada worker PID 26788, dengan Pillow 12.3.0. Snapshot lengkap 64 akun, paused=false, reply aktif kembali setelah startup; kedua layanan lama tetap unloaded. Gaya baru berlaku untuk render berikutnya, bukan revisi video yang sudah dijadwalkan/terbit. Bukti terbaru: runtime/verification/hook-visual-20261016/. Pilot tiga platform, tanpa mirror, kredit Instagram, cleanup dan cutoff sebelumnya tetap berlaku.
 
 ## Keputusan yang tidak perlu ditanyakan ulang
 
