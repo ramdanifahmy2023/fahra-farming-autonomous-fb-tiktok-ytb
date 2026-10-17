@@ -85,3 +85,12 @@ Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit a
 Suite offline memakai DB/file sementara, tidak credential produksi. Preview integrasi memakai runtime terpisah dan tidak POST publikasi. Pilot nyata hanya pada fase aktivasi yang dijalankan secara eksplisit setelah kriteria sebelumnya lulus. Sebelum cutover, ulang inventaris dan validasi batas provider yang bisa berubah.
 
 Setiap hasil mencatat commit, versi dependency/model, input/fixture, waktu, hasil aktual, batas pengamatan, dan lokasi bukti. Jangan menyatakan seluruh matriks PASS dari config yang tersimpan atau CI dokumen hijau. Git/CI harus menguji commit tepat yang akan digabung/dijalankan.
+
+
+## Laporan TikTok harian — 18 Oktober 2026
+
+Preview GET terisolasi dan pilot produksi membaca 46/46 akun TikTok yang diizinkan; clayrafathia 9.471 dan almeera_278 694 follower. Pilot diterima Telegram pada 01:10:48 WIB, message_id 416, satu bagian; hash isi/manifest dan accepted journal cocok. Pilot tidak menjadi baseline pagi. Snapshot, cutoff, kuota dan kepemilikan publikasi tidak diubah collector.
+
+42 tes tambahan laporan meliputi threshold/parser, D−1/D−7, rename/reconnect, clock/deadline/catch-up, Unicode/pagination HTML, private admin, retry/timeout, crash/restore, startup gagal dan disk journal lambat. Verifier penuh revisi terakhir 376 tes tanpa skip PASS. CI dan SHA akhir serta pemeriksaan restart tanpa pengiriman ulang dicatat dalam runtime/verification/tiktok-daily-report-20261018/.
+
+Batas bukti: sendMessage diterima API tidak membuktikan pengguna membaca pesan. Computer Use tidak disetujui untuk Safari/Telegram, sehingga tampilan native belum diperiksa. Run otomatis 08.00 pertama masih menunggu waktunya; fixture jam dan pilot tidak dianggap bukti run terjadwal. Laporan telah enabled untuk jadwal itu, bergantung pada Mac/volume/jaringan yang tersedia.

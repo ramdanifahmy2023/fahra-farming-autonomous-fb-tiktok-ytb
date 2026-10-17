@@ -45,14 +45,19 @@ def initialize(config):
                  window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'])
 
 
+def finish_startup(config, store, replies):
+    AttemptJournal(config).reconcile_store(store)
+    config.require_live_action()
+    store.recover()
+    replies.db.recover()
+
+
 async def wait_for_startup(config, store, repliz, replies):
     while True:
         try:
             await repliz.sync(store)
-            AttemptJournal(config).reconcile_store(store)
-            config.require_live_action()
-            store.recover()
-            replies.db.recover()
+            store.set('startup_health', {'ready': False, 'at': iso(), 'phase': 'reconciling_journal'})
+            await asyncio.to_thread(finish_startup, config, store, replies)
             store.set('startup_health', {'ready': True, 'at': iso()})
             return
         except Exception as exc:
