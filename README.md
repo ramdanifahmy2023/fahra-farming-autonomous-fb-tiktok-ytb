@@ -13,7 +13,7 @@ TikTok **iq7fanspage** selalu dikecualikan. Paket ini menggantikan kedua workflo
 
 Mulai dari [tools.md](tools.md) dan [operasi](docs/OPERATIONS.md). Keputusan tetap ada di [AGENTS.md](AGENTS.md), status/bukti di [memory.md](memory.md) dan [worklog.md](worklog.md). Rancangan dan matriks uji: [PLAN.md](docs/PLAN.md), [ACCEPTANCE.md](docs/ACCEPTANCE.md), [MIGRATION.md](docs/MIGRATION.md).
 
-Audit setelah aktivasi dan prioritas pekerjaan berikutnya: [temuan 16 Oktober 2026](docs/AUDIT_IMPROVEMENT_20261016.md) dan [rencana perbaikan](docs/IMPROVEMENT_PLAN.md). Permintaan terbaru fokus plan; perbaikan dalam dokumen tersebut belum diimplementasikan.
+Audit terbaru dengan penjelasan sederhana: [audit ulang 18 Oktober 2026](docs/AUDIT_20261018.md) dan [rencana perbaikan](docs/IMPROVEMENT_PLAN.md). [Audit 16 Oktober](docs/AUDIT_IMPROVEMENT_20261016.md) tetap menjadi arsip. Permintaan terbaru fokus audit/plan; perbaikan dalam dokumen tersebut belum diimplementasikan.
 
 Credential, runtime, media, dan konfigurasi mesin tidak masuk Git. Repo harus tetap private.
 

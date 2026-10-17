@@ -1,6 +1,6 @@
 # Audit paket terpadu, 16 Oktober 2026
 
-Arsip sebelum implementasi. Untuk kondisi setelah aktivasi, baca [audit perbaikan terbaru](AUDIT_IMPROVEMENT_20261016.md) dan [rencana berikutnya](IMPROVEMENT_PLAN.md). Pernyataan belum ada worker/pilot di bawah berlaku pada checkpoint audit awal.
+Arsip sebelum implementasi. Untuk kondisi setelah aktivasi, baca [audit ulang 18 Oktober](AUDIT_20261018.md), [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md), dan [rencana berikutnya](IMPROVEMENT_PLAN.md). Pernyataan belum ada worker/pilot di bawah berlaku pada checkpoint audit awal.
 
 Kesimpulan: model satu asset dengan delivery per platform dari proyek FB/YT layak menjadi dasar, ditambah caption dan reply kontekstual TikTok. Dua service lama tidak cukup digabung dalam satu proses. Schema, kuota, batas transaksi, migrasi, capability platform, dan kepemilikan automasi perlu dirancang ulang sebelum aktivasi.
 
