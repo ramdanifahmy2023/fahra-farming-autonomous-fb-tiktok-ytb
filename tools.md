@@ -53,6 +53,10 @@ Pemeriksa hanya membaca dokumen/source dan index, memeriksa tautan lokal, sintak
 
 Git origin memakai HTTPS dan helper `gh auth git-credential` lokal repo. Jangan menyimpan token pada URL. Push awal sempat gagal melalui default SSH; HTTPS memperbaiki akses tanpa mengganti credential pengguna. GitHub visibility harus tetap private.
 
+## Laporan TikTok 08.00 WIB
+
+CLI `report preview|status|enable|disable|pilot` tersedia; [prosedur laporan](docs/OPERATIONS.md#laporan-tiktok-harian) menjelaskan sakelar, tujuan private admin, baseline, catch-up dan pemulihan send_unknown. Preview hanya GET dengan DB terisolasi. Pengiriman dilakukan worker produksi yang sama; CLI pilot hanya mengantrekan permintaan, tanpa getUpdates kedua. Arsip implementasi berada di runtime/verification/tiktok-daily-report-20261018/.
+
 ## Paket dan operasi
 
 Paket Python `fahra_automation`, Python 3.14, SQLite schema v1. Dependency dikunci pada requirements.lock. LaunchAgent `id.fahra.automation.social`; database runtime/workflow.sqlite3. Petunjuk perintah, cutover, dan pemulihan ada di [OPERATIONS.md](docs/OPERATIONS.md).

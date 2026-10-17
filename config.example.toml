@@ -75,3 +75,8 @@ credentials_file = "Credential/google_drive_oauth.json"
 client_secrets_file = "Credential/google_oauth_client.json"
 folder_id = ""
 make_video_readable_by_link = true
+
+[account_report]
+enabled = false
+# Fixed contract: private admin, >600 followers, 07:50 collection / 08:00 Asia/Jakarta.
+# Runtime enable/disable is separate from the publishing pause switch.

@@ -1,6 +1,6 @@
 # Rencana laporan TikTok pukul 08.00 WIB
 
-Status 18 Oktober 2026: rancangan untuk permintaan audit dan plan. Fitur, jadwal, serta pengiriman laporan belum diaktifkan. Dasarnya adalah [audit kode dan GET Repliz nyata](AUDIT_TIKTOK_REPORT_20261018.md). Persetujuan implementasi paket awal tidak otomatis mengaktifkan fitur baru ini.
+Status lanjutan 18 Oktober 2026: pengguna meminta implementasi di worktree dan push ke main. Kode, fixture dan preview GET nyata telah dibuat; aktivasi/pilot serta bukti jadwal otomatis dicatat terpisah pada worklog. Dasarnya adalah [audit kode dan GET Repliz nyata](AUDIT_TIKTOK_REPORT_20261018.md). Permintaan lanjutan ini menyetujui implementasi dan tahap aktivasi dalam rencana ini.
 
 ## Hasil yang diminta
 
@@ -113,4 +113,4 @@ Metadata minimal: run ID, tanggal/jadwal WIB, started/completed/fetched timestam
 | Pesan panjang, nama Unicode/HTML, lebih dari enam akun | Semua akun termuat, HTML sah, batas karakter terpenuhi, tautan aman |
 | Gangguan metrik atau laporan | Input bot, publikasi, reply, kuota dan pemilik worker tidak berubah akibat state laporan |
 
-Kriteria selesai adalah data nyata cocok, format diperiksa di Telegram, pilot terkirim, dan run terjadwal 08.00 terbukti. Pada tahap audit ini, semua butir implementasi dan pengiriman tersebut masih belum dijalankan.
+Kriteria selesai adalah data nyata cocok, format diperiksa di Telegram, pilot terkirim, dan run terjadwal 08.00 terbukti. Pada tahap audit awal butir tersebut belum dijalankan. Status implementasi terbaru mengikuti worklog; preview dan pilot tidak menggantikan bukti run otomatis pukul 08.00. Akses Computer Use untuk Safari dan Telegram ditolak saat implementasi, sehingga review visual native tetap belum terverifikasi.

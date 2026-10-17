@@ -45,3 +45,23 @@ Jangan menghapus journal, ID remote, counts_quota, atau status unknown agar job 
 Cleanup hanya file kerja yang memiliki bukti semua tujuan wajib published, waktu publikasi terakhir+24jam, checksum Bank/Drive lengkap, enam frame, manifest MCP completed, dan tidak ada referensi lain. Ketiga workspace termasuk preview/arsip diperiksa. Arsip legacy di luar batas runtime baru tetap dilindungi; jangan menghapusnya manual untuk merapikan.
 
 Uji yang dimasukkan dari sesi operator memakai batch chat_id=0/user_id=0 dan message_id negatif unik, dengan event operator_pilot_enqueued berisi actor, authorization, dan intake_channel=operator_cli. Jangan mengarang update Telegram. Batch operator tetap chat0 selama aktif agar tidak membentuk reply-thread ke message ID negatif. Setelah getChat admin berhasil, laporan dapat dikirim eksplisit tanpa thread; kiriman Telegram asli tetap memakai ID update/message asli.
+
+## Laporan TikTok harian
+
+Fitur memakai worker, limiter Repliz, dan outbox Telegram yang sama. Tidak ada bot, polling getUpdates, atau LaunchAgent tambahan. Sakelar laporan terpisah dari `/jeda` dan reply; default config contoh tetap disabled. Jadwal tetap 07.50 pengambilan, 08.00 kirim Asia/Jakarta, catch-up hari berjalan sebelum 12.00. Mac/volume/jaringan harus tersedia. Setelah 12.00 hari yang belum selesai ditandai terlewat.
+
+```sh
+.venv/bin/python -m fahra_automation report preview --credentials-from '/Volumes/DATA KERJA /Project Dev/Fahra-automation-tiktok-fb-ytb-downloader/Credential'
+.venv/bin/python -m fahra_automation report status
+.venv/bin/python -m fahra_automation report enable
+.venv/bin/python -m fahra_automation report pilot
+.venv/bin/python -m fahra_automation report disable
+```
+
+Preview membuat DB, jurnal, evidence.json, dan telegram.html sendiri di runtime/report-previews; hanya GET Repliz, tanpa token/pengiriman Telegram atau perubahan pool/kuota publikasi. `--credentials-from` hanya untuk preview. `enable` memverifikasi ownership produksi serta identitas bot/private admin melalui getMe/getChat; tujuan tetap admin 265732518. `pilot` meminta worker yang sedang berjalan mengumpulkan data baru dan mengirim satu laporan uji per tanggal. CLI tidak menjalankan worker/getUpdates kedua. Pilot tidak dipakai sebagai baseline snapshot pagi.
+
+Tabel account_report_runs, account_metric_snapshots, dan account_report_parts menyimpan tanggal WIB, semua akun dalam lingkup, data numerik, status, hash, dan message_id. Progress hanya selisih ID yang sama pada D−1/D−7; hari yang hilang tidak diinterpolasi. Metrik harian provider selalu diberi tanggal terpisah. Filter follower >600 dan perlindungan iq7fanspage diterapkan sebelum GET statistik. Rename/reconnect mempertahankan histori ID.
+
+`report status` menunjukkan health startup/collector/delivery dan status per bagian. Startup Repliz yang gagal di-retry tiap 30 detik; bot dan laporan tetap hidup, sedangkan worker publikasi/reply/cleanup baru dimulai sesudah snapshot lengkap, rekonsiliasi jurnal, dan guard ownership lulus. Snapshot publikasi diinvalidasi sebelum loop Telegram dimulai. Gagal startup tidak membuka guard publikasi.
+
+Jurnal laporan berada di subfolder `account-reports` dalam attempt journal eksternal. Backup/restore harus mempertahankan jurnal tersebut bersama DB. Manifest isi dibekukan dan difsync sebelum pengiriman; intent transport dicatat setelah throttle dan guard terakhir. `sent` berarti Telegram mengembalikan message_id, bukan bukti dibaca. `send_unknown` berarti Telegram mungkin menerima pesan; jangan menghapus jurnal atau mengembalikannya ke queued. Tanpa message_id, Bot API tidak menyediakan pencarian riwayat pesan untuk membuktikan kirim. Periksa chat secara manual jika akses tersedia. Error 400/403/404 menjadi failed; 429 diulang sesuai retry_after. Bagian lain dan notifikasi pipeline tetap diproses.

@@ -38,6 +38,7 @@ class Telegram:
     def __init__(self, config, store, pipeline, client=None):
         self.config, self.store, self.pipeline = config, store, pipeline
         self.client = client or httpx.AsyncClient(base_url="https://api.telegram.org/bot" + config.telegram_token() + "/", timeout=40)
+        self.reports = None
         self.ui_lock = asyncio.Lock()
         self.cooldown = 0
         self.chat_sent_at = {}
@@ -180,10 +181,12 @@ class Telegram:
         await self.answer_callback( callback_query_id=query["id"])
         self.store.progress_page(batch['id'], page)
 
-    async def send_ui(self, method, chat_id, **data):
+    async def send_ui(self, method, chat_id, *, before_send=None, **data):
         delay = max(self.cooldown, self.chat_sent_at.get(chat_id, 0) + 1.1) - time.monotonic()
         if delay > 0:
             await asyncio.sleep(delay)
+        if before_send is not None:
+            before_send()
         result = await self.call(method, chat_id=chat_id, link_preview_options={"is_disabled": True}, **data)
         self.chat_sent_at[chat_id] = time.monotonic()
         return result
@@ -274,5 +277,11 @@ class Telegram:
                             (item['id'], iso(now() + timedelta(seconds=max(30, getattr(exc, 'retry_after', 0))))))
                     if getattr(exc, 'code', None) == 429:
                         break
+            if self.reports is not None:
+                try:
+                    await self.reports.flush_one()
+                except Exception as exc:
+                    from .account_reports import error_label
+                    self.store.set('account_report_delivery_health', {'ok': False, 'at': iso(), 'error': error_label(exc)})
             for batch_id in self.store.progress_due():
                 await self.update_progress(batch_id)

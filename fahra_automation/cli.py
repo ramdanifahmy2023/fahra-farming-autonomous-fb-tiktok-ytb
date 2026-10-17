@@ -45,6 +45,22 @@ def initialize(config):
                  window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'])
 
 
+async def wait_for_startup(config, store, repliz, replies):
+    while True:
+        try:
+            await repliz.sync(store)
+            AttemptJournal(config).reconcile_store(store)
+            config.require_live_action()
+            store.recover()
+            replies.db.recover()
+            store.set('startup_health', {'ready': True, 'at': iso()})
+            return
+        except Exception as exc:
+            store.invalidate_snapshot()
+            store.set('startup_health', {'ready': False, 'at': iso(), 'error': safe_error(exc)})
+            await asyncio.sleep(30)
+
+
 async def run(config, store):
     config.require_production_checkout()
     config.telegram_token()
@@ -52,16 +68,17 @@ async def run(config, store):
         repliz = Repliz(config)
         telegram = None
         try:
-            await repliz.sync(store)
-            AttemptJournal(config).reconcile_store(store)
             config.require_live_action()
-            store.recover()
+            store.invalidate_snapshot()
+            store.set('startup_health', {'ready': False, 'at': iso(), 'phase': 'waiting_for_repliz'})
             media = Media(config)
             pipeline = Pipeline(config, store, repliz, Downloader(config), media, Analyzer(config, media), Drive(config))
             telegram = Telegram(config, store, pipeline)
             cleaner = Cleaner(config, store)
             replies = ReplyWorker(config, store, repliz)
-            replies.db.recover()
+            from .account_reports import AccountReports
+            reports = AccountReports(config, store, repliz, telegram)
+            telegram.reports = reports
             stop = asyncio.Event()
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -74,11 +91,15 @@ async def run(config, store):
                     except Exception as exc:
                         store.record('backup_failed', error=safe_error(exc))
                     await asyncio.sleep(config.section('workflow')['backup_interval_seconds'])
+            async def operational_workers():
+                await wait_for_startup(config, store, repliz, replies)
+                async with asyncio.TaskGroup() as operations:
+                    for worker in (pipeline.worker_loop, pipeline.monitor_loop, pipeline.sync_loop,
+                                   cleaner.loop, replies.polling_loop, replies.worker_loop, replies.profile_loop):
+                        operations.create_task(worker())
             print('Workflow berjalan. Status dan jejak tersimpan di SQLite.', flush=True)
             async with asyncio.TaskGroup() as group:
-                for task in (telegram.polling_loop, telegram.outbox_loop, pipeline.worker_loop,
-                             pipeline.monitor_loop, pipeline.sync_loop, backups, cleaner.loop,
-                             replies.polling_loop, replies.worker_loop, replies.profile_loop):
+                for task in (telegram.polling_loop, telegram.outbox_loop, reports.loop, backups, operational_workers):
                     tasks.append(group.create_task(task()))
                 await stop.wait()
                 for task in tasks:
@@ -268,11 +289,23 @@ def main():
     p.add_argument('--staging', action='store_true')
     p = sub.add_parser('reply')
     p.add_argument('action', choices=['status','pause','resume'])
+    p = sub.add_parser('report', help='Laporan TikTok harian ke chat pribadi admin.')
+    p.add_argument('action', choices=['preview', 'status', 'enable', 'disable', 'pilot'])
+    p.add_argument('--credentials-from', type=Path, help='Folder Credential untuk preview GET terisolasi.')
     args = parser.parse_args()
     try:
+        if args.command == 'report' and args.credentials_from and args.action != 'preview':
+            raise ValueError('--credentials-from hanya untuk report preview.')
         config = Config.load(args.root)
+        if args.command == 'report' and args.action == 'preview':
+            from .report_cli import preview as report_preview
+            output(asyncio.run(report_preview(config, args.credentials_from)))
+            return 0
         store = initialize(config)
-        if args.command == 'migrate':
+        if args.command == 'report':
+            from .report_cli import operate
+            output(asyncio.run(operate(config, store, args.action)))
+        elif args.command == 'migrate':
             if args.staging and args.action not in {'import','reconcile'}:
                 raise ValueError('--staging hanya untuk import atau reconcile, bukan aktivasi.')
             if args.final and args.action != 'snapshot':
