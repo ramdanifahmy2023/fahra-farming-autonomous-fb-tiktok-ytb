@@ -17,6 +17,8 @@ class ReplyWait(ConfigurationError):
 class ReplyStore:
     def __init__(self, store):
         self.store = store
+        if store.readonly:
+            return
         with store.connect() as c:
             c.executescript(f"""
                 CREATE TABLE IF NOT EXISTS video_contexts(
@@ -51,7 +53,7 @@ class ReplyStore:
             if not self.store._snapshot_fresh(c) or generation is not None and current != generation:
                 raise ReplyWait('Snapshot akun sedang diperbarui atau kedaluwarsa; menunggu snapshot lengkap.')
             if account_id is not None and not c.execute(
-                    'SELECT 1 FROM accounts WHERE id=? AND connected=1 AND eligible=1', (account_id,)).fetchone():
+                    "SELECT 1 FROM accounts WHERE id=? AND connected=1 AND username!=''", (account_id,)).fetchone():
                 raise ValueError('Akun tidak terhubung/diizinkan pada snapshot lengkap.')
             return current
 
@@ -138,11 +140,13 @@ class ReplyStore:
 
     def update(self, identity, status, reason='', draft=None, job_id=None, delay=0):
         with self.store.tx() as c:
+            previous = c.execute('SELECT status,reason FROM comment_events WHERE id=?', (identity,)).fetchone()
             c.execute("""UPDATE comment_events SET status=?,reason=?,updated_at=?,next_attempt=?,
                 draft=coalesce(?,draft),job_id=coalesce(?,job_id) WHERE id=?""",
                 (status, reason[:800], iso(), iso(now() + timedelta(seconds=delay)),
                  json.dumps(draft, ensure_ascii=False) if draft is not None else None, job_id, identity))
-            self.store.event(c, 'reply_' + status, job_id, event_id=identity, reason=reason[:300])
+            if previous and (previous['status'], previous['reason']) != (status, reason[:800]):
+                self.store.event(c, 'reply_' + status, job_id, event_id=identity, reason=reason[:300])
 
     def job_for(self, account_id, post_id):
         with self.store.connect() as c:
@@ -222,11 +226,13 @@ class ReplyStore:
             c.execute('UPDATE comment_events SET status=?,job_id=?,next_attempt=?,updated_at=? WHERE id=?',
                       (status, event.get('job_id'), iso(), iso(), event['id']))
 
-    def unresolved(self):
+    def unresolved(self, identity=None):
         with self.store.connect() as c:
             return [(self.decode(r), dict(c.execute('SELECT * FROM reply_attempts WHERE event_id=?', (r['id'],)).fetchone()))
                     for r in c.execute("""SELECT * FROM comment_events
-                        WHERE status IN ('send_unknown','sent_unverified') AND next_attempt<=? LIMIT 5""", (iso(),)).fetchall()]
+                        WHERE status IN ('send_unknown','sent_unverified')
+                        AND ((? IS NULL AND next_attempt<=?) OR id=?)
+                        ORDER BY next_attempt,created_at LIMIT 5""", (identity, iso(), identity)).fetchall()]
 
     def summary(self):
         with self.store.connect() as c:

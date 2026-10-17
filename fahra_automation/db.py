@@ -13,11 +13,11 @@ from zoneinfo import ZoneInfo
 from .config import ConfigurationError, EXCLUDED_ACCOUNT_ID, PLATFORMS, allowed_account
 from .scheduler import daily_slots, offset_for, parse_time
 from .util import iso, now, safe_error
+from .schema import VERSION as SCHEMA_VERSION, upgrade
 
 ZONE = ZoneInfo("Asia/Jakarta")
 TERMINAL = {"published", "failed", "cancelled", "duplicate"}
 PREPARE = {"queued", "downloaded", "analyzed", "rendered", "drive_ready"}
-SCHEMA_VERSION = 1
 
 
 class Connection(sqlite3.Connection):
@@ -29,7 +29,7 @@ class Connection(sqlite3.Connection):
 
 
 class Store:
-    def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600):
+    def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600, readonly=False):
         if type(daily_limit) is not int or not 1 <= daily_limit <= 20:
             raise ValueError('Batas video harus antara satu dan 20 per akun/hari.')
         if not (type(window_start) is int and type(window_end) is int and 0 <= window_start < window_end <= 24):
@@ -37,12 +37,18 @@ class Store:
         self.path = Path(path)
         self.daily_limit, self.window_start, self.window_end = daily_limit, window_start, window_end
         self.snapshot_ttl = snapshot_ttl
+        self.readonly = readonly
+        if readonly:
+            with self.connect() as c:
+                if c.execute('PRAGMA user_version').fetchone()[0] not in {1, SCHEMA_VERSION}:
+                    raise ValueError('Database belum diinisialisasi atau versi tidak didukung.')
+            return
         path = self.path
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as c:
             existing = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
             version = c.execute('PRAGMA user_version').fetchone()[0]
-            if existing and version != SCHEMA_VERSION:
+            if existing and version not in {1, SCHEMA_VERSION}:
                 raise ValueError('Database workflow lama/versi lain harus melalui importer, bukan dibuka langsung.')
             c.executescript(f"""
                 PRAGMA journal_mode=DELETE;
@@ -114,14 +120,17 @@ class Store:
             columns = {r["name"] for r in c.execute("PRAGMA table_info(outbox)")}
             if "options" not in columns:
                 c.execute("ALTER TABLE outbox ADD COLUMN options TEXT NOT NULL DEFAULT '{}'")
-            c.execute(f'PRAGMA user_version={SCHEMA_VERSION}')
+            upgrade(c, version)
             self.put_setting(c, 'schema_version', SCHEMA_VERSION)
             self.put_setting(c, 'daily_limit', daily_limit)
 
     def connect(self):
-        c = sqlite3.connect(self.path, timeout=30, isolation_level=None, factory=Connection)
+        c = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro' if self.readonly else self.path,
+                            uri=self.readonly, timeout=30, isolation_level=None, factory=Connection)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA foreign_keys=ON")
+        if self.readonly:
+            c.execute('PRAGMA query_only=ON')
         return c
 
     @contextmanager
@@ -141,6 +150,30 @@ class Store:
     def event(c, kind, job_id=None, **detail):
         c.execute("INSERT INTO events(at,job_id,kind,detail) VALUES(?,?,?,?)",
                   (iso(), job_id, kind, json.dumps(detail, ensure_ascii=False)))
+
+    def health(self, component, state, **detail):
+        from .health import record
+        record(self, component, state, **detail)
+
+    def timing(self, name, milliseconds):
+        with self.tx() as c:
+            c.execute("""INSERT INTO timings VALUES(?,1,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
+                samples=samples+1,total_ms=total_ms+excluded.last_ms,max_ms=max(max_ms,excluded.last_ms),
+                last_ms=excluded.last_ms,updated_at=excluded.updated_at""",
+                      (name, milliseconds, milliseconds, milliseconds, iso()))
+
+    def capability(self, account_id, operation, state, evidence, reason=''):
+        with self.tx() as c:
+            account = c.execute('SELECT * FROM accounts WHERE id=?', (account_id,)).fetchone()
+            if not account:
+                raise ValueError('Akun capability tidak ditemukan.')
+            c.execute('INSERT OR REPLACE INTO account_capabilities VALUES(?,?,?,?,?,?,?,?)',
+                      (account_id, operation, state, evidence,
+                       json.dumps([account['platform'],account['username']]), iso(),
+                       iso(now()+timedelta(days=7)), reason[:800]))
+            if operation == 'publish' and state == 'held':
+                c.execute('UPDATE accounts SET eligible=0 WHERE id=?', (account_id,))
+                self.event(c, 'account_publish_held', account_id=account_id, reason=reason[:800])
 
     def record(self, kind, job_id=None, **detail):
         with self.tx() as c:
@@ -225,7 +258,7 @@ class Store:
             return [dict(r) for r in c.execute('SELECT * FROM accounts WHERE connected=1 AND eligible=1 ORDER BY ordinal')
                     if platform is None or r['platform'] == platform]
 
-    def _sync_accounts(self, c, accounts):
+    def _sync_accounts(self, c, accounts, schedules=()):
         selected = [a for a in accounts if allowed_account(a)]
         ids = [a.get("id", a.get("_id")) for a in selected]
         if len(ids) != len(set(ids)) or any(not isinstance(i, str) or not i for i in ids) or any(type(a.get("isConnected")) is not bool for a in selected):
@@ -241,14 +274,43 @@ class Store:
             order = old['ordinal'] if old else ordinal
             if not old:
                 ordinal += 1
-            eligible = a.get('publishEligible', True)
-            if type(eligible) is not bool:
+            explicit = a.get('publishEligible')
+            if explicit is not None and type(explicit) is not bool:
                 raise ValueError('Kesiapan akun harus boolean.')
+            username = str(a.get('username') or '').strip()
+            identity = json.dumps([a['type'], username, a.get('generatedId')], separators=(',', ':'))
+            evidence = 'provider' if explicit is not None else ''
+            prior = c.execute("SELECT * FROM account_capabilities WHERE account_id=? AND operation='publish'", (aid,)).fetchone()
+            proof_since = max(iso(now()-timedelta(days=7)), prior['observed_at']
+                              if prior and prior['evidence'] == 'provider_denied' else '')
+            success = any(self._remote_account(s) == aid and s.get('status') == 'success'
+                          and s.get('postId') and parse_time(proof_since) <= self._remote_time(s) <= now()
+                          for s in schedules)
+            if not success and old and old['username'] == username and username:
+                success = bool(c.execute("""SELECT 1 FROM jobs j JOIN events e ON e.job_id=j.id
+                    WHERE j.account_id=? AND j.status='published'
+                    AND json_extract(j.payload,'$.post_id') IS NOT NULL
+                    AND json_extract(j.payload,'$.post_url') IS NOT NULL
+                    AND e.kind='status_changed' AND json_extract(e.detail,'$.status')='published'
+                    AND e.at>=? AND e.at<=? LIMIT 1""", (aid, proof_since, iso())).fetchone())
+            if not evidence and success:
+                evidence = 'provider_success'
+            if not evidence and prior and prior['identity'] == identity and prior['expires_at'] > iso() and prior['state'] == 'ready':
+                evidence = 'cached:' + prior['evidence'].removeprefix('cached:')
+            eligible = bool(username and a['isConnected'] and (explicit is True or (explicit is None and evidence)))
+            reason = '' if eligible else ('Identitas akun belum lengkap.' if not username else
+                     'Akun terputus.' if not a['isConnected'] else
+                     'Provider menolak posting.' if explicit is False else 'Bukti kemampuan posting belum tersedia.')
             c.execute('''INSERT INTO accounts(id,username,platform,name,ordinal,connected,updated_at,eligible,slot_offset)
                 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET username=excluded.username,
                 name=excluded.name,connected=excluded.connected,eligible=excluded.eligible,updated_at=excluded.updated_at''',
                 (aid, a.get('username') or '', a['type'], a.get('name') or '', order, int(a['isConnected']), iso(),
                  int(eligible), offset_for(aid, self.daily_limit, self.window_start, self.window_end)))
+            expires = prior['expires_at'] if evidence.startswith('cached:') else iso(now() + timedelta(days=7))
+            denied = prior and prior['evidence'] == 'provider_denied' and not eligible
+            c.execute("""INSERT OR REPLACE INTO account_capabilities VALUES(?,?,?,?,?,?,?,?)""",
+                      (aid, 'publish', 'ready' if eligible else 'held', 'provider_denied' if denied else evidence or 'missing',
+                       identity, prior['observed_at'] if denied else iso(), expires, prior['reason'] if denied else reason))
         after = {r['id']: dict(r) for r in c.execute('SELECT * FROM accounts')}
         changes = {'added': sorted(set(after) - set(before)),
                    'disconnected': sorted(k for k in before if before[k]['connected'] and not after[k]['connected']),
@@ -360,7 +422,7 @@ class Store:
         with self.tx() as c:
             if expected_generation is not None and expected_generation != self.setting(c, 'snapshot_generation', 0):
                 raise ConfigurationError('Snapshot sync lama sudah digantikan; hasil tidak diterapkan.')
-            changes = self._sync_accounts(c, accounts)
+            changes = self._sync_accounts(c, accounts, schedules)
             self._sync_external(c, schedules, from_day, to_day)
             generation = self.setting(c, 'snapshot_generation', 0) + 1
             self.put_setting(c, 'snapshot_generation', generation)
@@ -449,6 +511,8 @@ class Store:
                 return {"batch_id": old[0], "replayed": True, "accepted": 0, "duplicates": 0}
             batch_id = uuid.uuid4().hex
             c.execute("INSERT INTO batches VALUES(?,?,?,?,?)", (batch_id, chat_id, user_id, message_id, iso()))
+            c.execute('INSERT INTO batch_routes VALUES(?,?)',
+                      (batch_id, user_id if chat_id < 0 and user_id > 0 else chat_id))
             accepted = duplicates = 0
             for url, source_id in urls:
                 if (c.execute("SELECT 1 FROM assets WHERE source_id=?", (source_id,)).fetchone()
@@ -493,6 +557,43 @@ class Store:
                 c.execute('UPDATE batch_progress SET done=0 WHERE batch_id=?', (job['batch_id'],))
                 self.event(c, 'status_changed', job['id'], previous=job['status'], status='needs_review', reason=safe_error(reason))
 
+    def fail_asset(self, asset_id, error, *, max_attempts=4, kind='transient'):
+        with self.tx() as c:
+            asset = c.execute('SELECT * FROM assets WHERE id=?', (asset_id,)).fetchone()
+            if not asset or asset['status'] not in PREPARE - {'drive_ready'}:
+                return
+            payload = json.loads(asset['payload'])
+            attempts = payload.get('failure_attempts', 0) + 1
+            terminal = isinstance(error, ValueError) or attempts >= max_attempts
+            message = safe_error(error)
+            payload.update(failure_attempts=attempts, failure_kind=kind, failure_reason=message,
+                           resume_status=asset['status'])
+            c.execute('UPDATE assets SET status=?,payload=?,leased_job_id=NULL,updated_at=? WHERE id=?',
+                      ('failed' if terminal else asset['status'], json.dumps(payload, ensure_ascii=False), iso(), asset_id))
+            retry_at = iso(now() + timedelta(seconds=min(1800, 30 * 2 ** attempts)))
+            for row in c.execute("""SELECT * FROM jobs WHERE asset_id=? AND status IN
+                ('queued','downloaded','analyzed','rendered') AND schedule_id IS NULL
+                AND json_extract(payload,'$.submission') IS NULL""", (asset_id,)).fetchall():
+                data = json.loads(row['payload'])
+                data.update(failure_kind=kind, failure_reason=message, resume_status=asset['status'])
+                state = 'failed' if terminal else row['status']
+                c.execute("""UPDATE jobs SET status=?,payload=?,attempts=?,next_attempt=?,leased=0,
+                    last_error=?,counts_quota=CASE WHEN ? THEN 0 ELSE counts_quota END,updated_at=? WHERE id=?""",
+                    (state, json.dumps(data, ensure_ascii=False), attempts, retry_at, message, terminal, iso(), row['id']))
+                c.execute('UPDATE batch_progress SET done=0 WHERE batch_id=?', (row['batch_id'],))
+                if terminal:
+                    self.event(c, 'status_changed', row['id'], previous=row['status'], status=state)
+            self.event(c, 'asset_failed' if terminal else 'asset_retry_waiting', asset_id=asset_id,
+                       stage=asset['status'], attempt=attempts, kind_code=kind, error=message)
+
+    def defer_asset(self, asset_id, reason, seconds=60):
+        with self.tx() as c:
+            c.execute('UPDATE assets SET leased_job_id=NULL WHERE id=?', (asset_id,))
+            c.execute("""UPDATE jobs SET next_attempt=?,leased=0,last_error=? WHERE asset_id=?
+                AND status IN ('queued','downloaded','analyzed','rendered')
+                AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL""",
+                (iso(now() + timedelta(seconds=seconds)), safe_error(reason), asset_id))
+
     def asset_checkpoint(self, asset_id, status=None, payload=None):
         with self.tx() as c:
             old = c.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
@@ -503,6 +604,8 @@ class Store:
                 raise ValueError("Status media tidak valid.")
             merged = json.loads(old["payload"])
             merged.update(payload or {})
+            if status and state != old['status']:
+                merged['failure_attempts'] = 0
             encoded = json.dumps(merged, ensure_ascii=False)
             c.execute("UPDATE assets SET status=?,payload=?,updated_at=? WHERE id=?", (state, encoded, iso(), asset_id))
             for job in c.execute("SELECT * FROM jobs WHERE asset_id=?", (asset_id,)).fetchall():
@@ -564,16 +667,18 @@ class Store:
         with self.tx() as c:
             if self.setting(c, "paused", False):
                 return None
-            row = c.execute("""SELECT j.* FROM jobs j JOIN assets a ON a.id=j.asset_id WHERE j.status IN
+            row = c.execute("""SELECT j.*,b.user_id AS sender FROM jobs j JOIN assets a ON a.id=j.asset_id
+                JOIN batches b ON b.id=j.batch_id LEFT JOIN sender_fairness f ON f.user_id=b.user_id WHERE j.status IN
                 ('queued','downloaded','analyzed','rendered','drive_ready')
                 AND j.leased=0 AND j.next_attempt<=? AND
                 (j.status='drive_ready' OR a.leased_job_id IS NULL)
                 AND (j.status!='drive_ready' OR NOT EXISTS(SELECT 1 FROM accounts target
                     WHERE target.id=j.account_id AND target.blocked_until>?))
-                ORDER BY j.created_at,j.rowid LIMIT 1""", (iso(), iso())).fetchone()
+                ORDER BY coalesce(f.last_claimed,''),j.created_at,j.rowid LIMIT 1""", (iso(), iso())).fetchone()
             if not row:
                 return None
             c.execute("UPDATE jobs SET leased=1 WHERE id=?", (row["id"],))
+            c.execute('INSERT OR REPLACE INTO sender_fairness VALUES(?,?)', (row['sender'], iso()))
             if row['status'] != 'drive_ready':
                 c.execute('UPDATE assets SET leased_job_id=? WHERE id=?', (row['id'], row['asset_id']))
             return self.decode(row)
@@ -648,6 +753,9 @@ class Store:
             account = c.execute('SELECT * FROM accounts WHERE id=?', (job['account_id'],)).fetchone()
             if not account or not account['connected'] or not account['eligible'] or account['platform'] != job['platform']:
                 raise ConfigurationError('Akun tidak lagi eligible.')
+            if not c.execute("""SELECT 1 FROM account_capabilities WHERE account_id=?
+                AND operation='publish' AND state='ready' AND expires_at>?""", (job['account_id'],iso())).fetchone():
+                raise ConfigurationError('Bukti kemampuan posting belum tersedia atau kedaluwarsa.')
             if account['blocked_until'] and parse_time(account['blocked_until']) > now():
                 raise ConfigurationError('Akun menunggu batas provider sampai ' + account['blocked_until'])
             if body.get('accountId') != job['account_id'] or not job['counts_quota'] or not job['planned_at']:
@@ -675,6 +783,36 @@ class Store:
             raise ConfigurationError('Akun preflight berubah.')
         return self.begin_submission(job_id, body, expected_generation)
 
+    def validate_submission(self, job_id, body, generation):
+        with self.connect() as c:
+            c.execute('BEGIN')
+            if not self._snapshot_fresh(c) or generation != self.setting(c, 'snapshot_generation'):
+                raise ConfigurationError('Snapshot berubah saat menunggu pengiriman; ulang pemeriksaan.')
+            job = c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if not job or job['status'] != 'submitting' or not job['leased'] or job['schedule_id']:
+                raise ConfigurationError('Intent kiriman berubah sebelum request dikirim.')
+            payload = json.loads(job['payload'])
+            if payload.get('submission') != body or payload.get('submission_generation') != generation:
+                raise ConfigurationError('Isi intent berubah sebelum request dikirim.')
+            pilot = self.setting(c, 'pilot_source_id')
+            if pilot and pilot != job['source_id']:
+                raise ConfigurationError('Pilihan pilot berubah sebelum pengiriman.')
+            account = c.execute('SELECT * FROM accounts WHERE id=?', (job['account_id'],)).fetchone()
+            if (not account or not account['connected'] or not account['eligible']
+                    or account['platform'] != job['platform'] or body.get('accountId') != account['id']):
+                raise ConfigurationError('Akun tidak lagi siap untuk dikirim.')
+            if not c.execute("""SELECT 1 FROM account_capabilities WHERE account_id=?
+                AND operation='publish' AND state='ready' AND expires_at>?""", (job['account_id'],iso())).fetchone():
+                raise ConfigurationError('Bukti kemampuan posting kedaluwarsa saat menunggu limiter.')
+            if account['blocked_until'] and parse_time(account['blocked_until']) > now():
+                raise ConfigurationError('Akun sedang menunggu batas provider.')
+            if (not job['counts_quota'] or not job['planned_at']
+                    or parse_time(job['planned_at']) != parse_time(body.get('scheduleAt'))
+                    or parse_time(job['planned_at']) <= now()
+                    or not self.setting(c, 'snapshot_from_day', '') <= job['slot_date'] <= self.setting(c, 'snapshot_to_day', '')
+                    or self.loads(c, job['slot_date'], job['platform'])[account['id']][1] > self.daily_limit):
+                raise ConfigurationError('Jadwal atau kuota berubah sebelum pengiriman.')
+
     def reject_submission(self, job_id, error=''):
         with self.tx() as c:
             job = c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
@@ -699,6 +837,10 @@ class Store:
             raise ValueError('Status jadwal tidak dikenal.')
         c.execute('UPDATE jobs SET slot_date=?,planned_at=?,counts_quota=1,schedule_id=?,updated_at=? WHERE id=?',
                   (day, iso(stamp), sid, iso(), job['id']))
+        if job['status'] == 'failed' and schedule['status'] in {'pending', 'process', 'success'}:
+            payload = json.loads(job['payload'])
+            payload['next_poll'] = ''
+            c.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(payload, ensure_ascii=False), job['id']))
         if job['slot_date'] != day:
             self.event(c, 'remote_slot_reconciled', job['id'], previous_day=job['slot_date'], day=day, schedule_id=sid)
 
@@ -717,7 +859,10 @@ class Store:
 
     def pending_publications(self):
         with self.connect() as c:
-            return [self.decode(r) for r in c.execute("SELECT * FROM jobs WHERE status IN ('submitting','submit_unknown','scheduled')")]
+            return [self.decode(r) for r in c.execute("""SELECT * FROM jobs WHERE
+                (status IN ('submitting','submit_unknown','scheduled') OR (status='failed' AND schedule_id IS NOT NULL))
+                AND coalesce(json_extract(payload,'$.next_poll'),'')<=?
+                ORDER BY coalesce(json_extract(payload,'$.next_poll'),''),updated_at LIMIT 100""", (iso(),))]
 
     def duplicate_hash(self, job_id, digest):
         with self.connect() as c:
@@ -776,11 +921,21 @@ class Store:
             p = json.loads(j["payload"])
             if p.get("submission"):
                 return False
-            stage = p.get("resume_status", "queued")
+            asset = c.execute('SELECT * FROM assets WHERE id=?', (j['asset_id'],)).fetchone()
+            shared = json.loads(asset['payload'])
+            if asset['leased_job_id'] or shared.get('failure_kind') == 'source':
+                return False
+            stage = asset['status'] if asset['status'] in PREPARE else shared.get('resume_status', p.get('resume_status', 'queued'))
             if stage not in PREPARE:
                 return False
+            if asset['status'] == 'failed':
+                shared.update(failure_attempts=0, failure_reason=None, failure_kind=None)
+                c.execute('UPDATE assets SET status=?,payload=?,updated_at=? WHERE id=?',
+                          (stage, json.dumps(shared, ensure_ascii=False), iso(), asset['id']))
+            p.update(resume_status=stage, failure_kind=None, failure_reason=None)
             c.execute("""UPDATE jobs SET status=?,attempts=0,next_attempt=?,updated_at=?,last_error=NULL,
-                counts_quota=0,account_id=NULL,slot_date=NULL,planned_at=NULL WHERE id=?""", (stage, iso(), iso(), job_id))
+                payload=?,counts_quota=0,account_id=NULL,slot_date=NULL,planned_at=NULL WHERE id=?""",
+                      (stage, iso(), iso(), json.dumps(p, ensure_ascii=False), job_id))
             self.allocate(c, job_id, now().astimezone(ZONE).date())
             c.execute("UPDATE batch_progress SET done=0 WHERE batch_id=?", (j["batch_id"],))
             self.event(c, "manual_retry", job_id)
@@ -818,8 +973,9 @@ class Store:
 
     def notify_publication(self, job_id):
         with self.tx() as c:
-            row = c.execute("""SELECT j.*,b.chat_id FROM jobs j JOIN batches b ON b.id=j.batch_id
-                WHERE j.id=? AND j.status='published'""", (job_id,)).fetchone()
+            row = c.execute("""SELECT j.*,coalesce(r.report_chat_id,CASE WHEN b.chat_id>0 THEN b.chat_id ELSE 0 END) AS chat_id
+                FROM jobs j JOIN batches b ON b.id=j.batch_id LEFT JOIN batch_routes r ON r.batch_id=b.id
+                WHERE j.id=? AND j.status='published' AND b.chat_id!=0""", (job_id,)).fetchone()
             if not row or row['chat_id'] == 0:
                 return False
             payload = json.loads(row["payload"])
@@ -839,7 +995,12 @@ class Store:
                 AND NOT EXISTS(SELECT 1 FROM jobs WHERE batch_id=b.id AND status NOT IN ('published','failed','cancelled','duplicate'))
                 AND NOT EXISTS(SELECT 1 FROM batch_progress WHERE batch_id=b.id)
                 AND NOT EXISTS(SELECT 1 FROM outbox WHERE dedupe_key='batch-done:'||b.id)""").fetchall()
-            for b in batches:
+            for original in batches:
+                b = dict(original)
+                route = c.execute('SELECT report_chat_id FROM batch_routes WHERE batch_id=?', (b['id'],)).fetchone()
+                b['chat_id'] = route[0] if route else max(0, b['chat_id'])
+                if b['chat_id'] <= 0:
+                    continue
                 totals = dict(c.execute("SELECT status,count(*) FROM jobs WHERE batch_id=? GROUP BY status", (b["id"],)).fetchall())
                 from .telegram_views import LABELS
                 text = f"Batch {b['id'][:8]} selesai. " + ", ".join(f"{LABELS.get(k, k)}: {v}" for k, v in totals.items())
@@ -867,6 +1028,8 @@ class Store:
             if not row:
                 return None
             batch = dict(row)
+            route = c.execute('SELECT report_chat_id FROM batch_routes WHERE batch_id=?', (batch_id,)).fetchone()
+            batch['report_chat_id'] = route[0] if route else max(0, batch['chat_id'])
             batch["receipt"] = json.loads(batch["receipt"])
             jobs = [self.decode(r) for r in c.execute("""SELECT j.*,a.name AS username FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
                 WHERE batch_id=? ORDER BY j.created_at,j.rowid""", (batch_id,))]
@@ -893,7 +1056,23 @@ class Store:
 
     def batch_chat(self, job):
         with self.connect() as c:
-            return c.execute("SELECT chat_id FROM batches WHERE id=?", (job["batch_id"],)).fetchone()[0]
+            row = c.execute("""SELECT coalesce(r.report_chat_id,CASE WHEN b.chat_id>0 THEN b.chat_id ELSE 0 END)
+                FROM batches b LEFT JOIN batch_routes r ON r.batch_id=b.id WHERE b.id=?""", (job["batch_id"],)).fetchone()
+            return row[0] if row else 0
+
+    def register_private_chat(self, user_id, chat_id):
+        if type(user_id) is not int or user_id <= 0 or user_id != chat_id:
+            raise ValueError('Identitas chat pribadi tidak sesuai pengirim.')
+        with self.tx() as c:
+            c.execute("""INSERT INTO private_chats VALUES(?,?,?) ON CONFLICT(user_id)
+                DO UPDATE SET chat_id=excluded.chat_id,seen_at=excluded.seen_at""", (user_id, chat_id, iso()))
+            c.execute("""UPDATE batch_progress SET done=0,next_poll='' WHERE batch_id IN
+                (SELECT batch_id FROM batch_routes WHERE report_chat_id=?)
+                AND (message_id IS NULL OR EXISTS(SELECT 1 FROM jobs WHERE batch_id=batch_progress.batch_id
+                    AND status NOT IN ('published','failed','cancelled','duplicate')))""", (chat_id,))
+            c.execute("""UPDATE outbox SET sent=0 WHERE chat_id=? AND sent=-1 AND id IN
+                (SELECT json_extract(detail,'$.outbox_id') FROM events WHERE kind='telegram_notification_unreachable'
+                 AND json_extract(detail,'$.recoverable')=1)""", (chat_id,))
 
     def batch_slots(self, batch_id):
         with self.connect() as c:

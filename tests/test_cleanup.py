@@ -50,7 +50,7 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
         self.paired = 'asset_id' in self.jobs[0]
         self.owner = self.jobs[0].get('asset_id', self.jobs[0]['id'])
         accounts = [{'id': 'acct-' + j.get('platform', 'tiktok'), 'type': j.get('platform', 'tiktok'),
-                     'username': 'someone', 'name': 'Somebody', 'isConnected': True} for j in self.jobs]
+                     'username': 'someone', 'name': 'Somebody', 'isConnected': True, 'publishEligible': True} for j in self.jobs]
         self.store.sync_accounts(accounts)
         self.folder = self.root / 'runtime/media' / self.owner
         analysis = self.folder / 'analysis'
@@ -98,6 +98,40 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
     def assert_kept(self):
         for file in (self.source, self.render, self.audio, self.bank, self.trace, *self.frames):
             self.assertTrue(file.exists(), str(file))
+
+    def test_legacy_bank_is_mapped_but_old_workspace_references_still_block(self):
+        moved = self.peer / 'runtime/media' / self.owner
+        moved.parent.mkdir(parents=True)
+        self.folder.rename(moved)
+        bank = self.peer / 'bank' / self.bank.name
+        self.bank.rename(bank)
+        payload = {**self.payload, 'legacy_origin':'tiktok', 'bank_path':str(bank),
+                   'render_path':str(moved/'final.mp4')}
+        self.store.asset_checkpoint(self.owner, payload=payload)
+        self.peer_store.enqueue(1,1,1,[('https://www.instagram.com/reel/legacy/', 'legacy')],can_allocate=False)
+        peer_asset = self.peer_store.job(self.peer_store.queue()[0]['id'])['asset_id']
+        self.peer_store.asset_checkpoint(peer_asset,payload=payload)
+        with self.peer_store.tx() as c:
+            c.execute('PRAGMA defer_foreign_keys=ON')
+            c.execute('UPDATE assets SET id=? WHERE id=?',(self.owner,peer_asset))
+            c.execute('UPDATE jobs SET asset_id=? WHERE asset_id=?',(self.owner,peer_asset))
+        folder = self.config.runtime/'migrations/final-fixture'
+        archived = self.peer_store.backup(folder)
+        manifest = {'id':'migration-fixture','sources':[{'origin':'tiktok','root':str(self.peer),
+                    'file':archived.name,'sha256':self.sha(archived)}]}
+        (folder/'manifest.json').write_text(json.dumps(manifest))
+        self.config.data['workflow']['legacy_roots'] = [str(self.peer)]
+        self.store.set('migration_id','migration-fixture')
+        self.store.set('migration_report',{'sources':[{'origin':'tiktok','snapshot':str(archived),'sha256':self.sha(archived)}]})
+        with self.store.tx() as c:
+            c.execute('CREATE TABLE legacy_mapping(origin TEXT,kind TEXT,legacy_id TEXT,new_id TEXT)')
+            c.execute("INSERT INTO legacy_mapping VALUES('tiktok','asset',?,?)",(self.owner,self.owner))
+        plan = self.cleaner.plan()
+        item = next(g for g in plan['groups'] if g['id']==self.owner)
+        self.assertEqual(item['state'],'blocked')
+        self.assertIn('masih dirujuk',item['reason'])
+        self.assertTrue(bank.exists())
+        self.assertTrue((moved/'final.mp4').exists())
 
     def test_plan_is_read_only_and_lists_only_three_large_work_files(self):
         report = self.cleaner.plan()

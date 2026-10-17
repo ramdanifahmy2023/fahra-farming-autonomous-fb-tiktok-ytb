@@ -1,6 +1,22 @@
 # Rencana perbaikan Fahra Automation
 
-Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Pengguna meminta audit dan plan dengan bahasa sederhana. Dokumen ini belum merupakan implementasi. A01–A11 merujuk [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md); temuan baru adalah penanganan error kelompok downloader dan pemetaan bank cleanup migrasi.
+Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Pengguna kemudian meminta implementasi di worktree dan push main. Kode perbaikan tersedia pada branch tugas; bukti merge, CI dan penerapan akhir dicatat pada worklog dan runtime/verification/audit-fixes-20261018/. A01–A11 merujuk [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md).
+
+## Hasil implementasi
+
+| Bagian | Perubahan yang dibuat | Batas bukti |
+| --- | --- | --- |
+| Pengiriman | Guard ulang setelah limiter; intent yang belum terkirim ditutup sebagai not_sent | Fixture race menghasilkan nol POST; tidak membuat posting uji |
+| Media | Error kelompok dibuka; retry dihitung per asset; probe sebelum AI | Preview nyata 720×1280, H.264/AAC, 30 fps, tanpa mirror, hook hilang pada detik 3 |
+| Telegram | Grup menerima tanda terima umum; progres/hasil pindah ke chat pengirim | Pesan detail lama yang belum terkirim ke grup dikarantina; bot harus dibuka untuk mengaktifkan kembali DM |
+| Pemulihan | Inspect/reconcile/resolve dan retry lokal; jadwal gagal diperiksa ulang pada ID sama | Resolve berarti mencocokkan bukti, bukan memaksa status sukses; provider retry belum diaktifkan |
+| Akun | Koneksi, identitas, bukti publish dan bukti reply dicatat terpisah | Capability yang hilang menunggu bukti; histori publish berlaku tujuh hari dan harus cocok identitas |
+| Operasi | Health, durasi tahap/limiter, penggunaan token, fairness pengirim, disk sebelum persiapan | Pengamatan 48 jam masih diperlukan; biaya uang tidak ditebak dari token |
+| Backup | Bundle database/jurnal/config nonrahasia/ownership beserta checksum; restore shadow | Kekurangan jurnal reply legacy dicatat terbuka; restore tidak memperoleh hak kirim |
+| Cleanup | Bank/render legacy dicocokkan dengan manifest, snapshot dan mapping asal | Pemeriksaan nyata 79 asset masih ditahan karena referensi lama; nol file dihapus |
+| Hasil konten | Collector GET opsional pada 24/72/168 jam sejak verifikasi published | Default nonaktif sampai operasi stabil; lewat jendela satu jam dicatat missed, tidak diisi angka masa kini |
+
+Versi Python minimum dipersempit menjadi 3.14 sesuai runtime dan CI yang diuji. Seluruh konfigurasi file memerlukan restart; reload parsial di worker dihapus. Perintah status dan inspect membuka SQLite hanya-baca. Aturan tujuan, batas kuota, bank Drive, orientasi, audio, kredit sumber dan ownership tetap berlaku.
 
 Sasarannya: bot tahu kapan harus bekerja, kapan harus menunggu, dan bagaimana melanjutkan pekerjaan gagal tanpa mengirim video atau balasan dua kali. AI tidak mengerjakan sumber yang sudah pasti ditolak oleh profil aplikasi.
 

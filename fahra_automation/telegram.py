@@ -73,9 +73,16 @@ class Telegram:
             return
         text = message.get("text", "")
         user_id, chat_id = message["from"]["id"], message["chat"]["id"]
+        private = message['chat'].get('type') == 'private'
+        if private:
+            self.store.register_private_chat(user_id, chat_id)
+        report_chat = chat_id if private else user_id
         prefix = "update:" + str(update["update_id"])
         command, _, argument = text.strip().partition(" ")
         command = command.split("@")[0].lower()
+        if not private and command.startswith('/'):
+            self.store.notify(prefix + ':private', chat_id,
+                              'Jawaban perintah dikirim lewat chat pribadi. Buka bot dan tekan Mulai jika belum terhubung.')
         if command == "/pair" and message["chat"]["type"] == "private":
             paired = self.store.pair(argument.strip(), user_id, chat_id)
             self.store.notify(prefix, chat_id, "Terhubung.\n\n" + HELP + ADMIN_HELP if paired else "Kode pairing salah atau kedaluwarsa. Buat kode baru dari CLI proyek.", views.html_options())
@@ -87,10 +94,10 @@ class Telegram:
                 self.store.notify(prefix, chat_id, "Bot ini memerlukan pairing. Jalankan perintah pair-code dari proyek lalu kirim /pair KODE melalui chat pribadi.")
             return
         if command in {"/start", "/help", "/bantuan"}:
-            self.store.notify(prefix, chat_id, HELP + (ADMIN_HELP if admin else ""), views.html_options())
+            self.store.notify(prefix, report_chat, HELP + (ADMIN_HELP if admin else ""), views.html_options())
             return
         if not admin and command.startswith("/"):
-            self.store.notify(prefix, chat_id, "Bot sedang terbuka untuk kiriman link. Kirim satu atau beberapa link Reel Instagram; hasil batch dikirim ke chat ini. Perintah kendali hanya untuk admin.")
+            self.store.notify(prefix, report_chat, "Bot menerima kiriman link Reel Instagram. Hasil batch dikirim lewat chat pribadi. Perintah kendali hanya untuk admin.")
             return
         options = None
         if command == "/status":
@@ -130,6 +137,9 @@ class Telegram:
             else:
                 result = self.store.enqueue(chat_id, user_id, message["message_id"], urls, can_allocate=bool(self.pipeline.fresh_sync()),
                                             progress=True, invalid=len(invalid))
+                if not private:
+                    self.store.notify(prefix + ':receipt', chat_id,
+                        'Link sudah dicatat. Progres dan hasil dikirim lewat chat pribadi. Buka bot dan tekan Mulai jika belum terhubung.')
                 if self.store.has_progress(result["batch_id"]):
                     return
                 if result["replayed"]:
@@ -140,7 +150,7 @@ class Telegram:
                     answer += "\nSlot WIB: " + ", ".join(f"{day}: {count}" for day, count in self.store.batch_slots(result["batch_id"]).items())
                     if not self.pipeline.fresh_sync():
                         answer += "\nAlokasi akun menunggu sinkronisasi Repliz."
-        self.store.notify(prefix, chat_id, answer, options)
+        self.store.notify(prefix, report_chat, answer, options)
 
     def admission_error(self, count):
         settings = self.config.section('workflow')
@@ -169,7 +179,7 @@ class Telegram:
             return
         batch, jobs = snapshot
         user = query.get("from", {}).get("id")
-        if (message.get("chat", {}).get("id") != batch["chat_id"]
+        if (message.get("chat", {}).get("id") != batch["report_chat_id"] or batch["report_chat_id"] <= 0
                 or message.get("message_id") != batch["progress_message_id"]
                 or (user != batch["user_id"] and not self.authorized(user))):
             await self.answer_callback( callback_query_id=query["id"], text="Rincian ini hanya untuk pengirim batch dan admin.", show_alert=True)
@@ -197,6 +207,10 @@ class Telegram:
         if not snapshot:
             return
         batch, jobs = snapshot
+        chat_id = batch['report_chat_id']
+        if chat_id <= 0:
+            self.store.progress_defer(batch_id, disabled=True)
+            return
         text, options, done = views.batch(batch, jobs, self.store.get("paused", False))
         signature = hashlib.sha256(json.dumps([text, options], sort_keys=True).encode()).hexdigest()
         message_id = batch["progress_message_id"]
@@ -204,7 +218,7 @@ class Telegram:
             if signature != batch["signature"] or not message_id:
                 if message_id:
                     try:
-                        await self.send_ui("editMessageText", batch["chat_id"], message_id=message_id, text=text, **options)
+                        await self.send_ui("editMessageText", chat_id, message_id=message_id, text=text, **options)
                     except TelegramError as exc:
                         if exc.code == 400 and "message is not modified" in str(exc).lower():
                             pass
@@ -213,8 +227,8 @@ class Telegram:
                         else:
                             raise
                 if not message_id:
-                    result = await self.send_ui("sendMessage", batch["chat_id"], text=text,
-                                                reply_parameters={"message_id": batch["message_id"], "allow_sending_without_reply": True}, **options)
+                    thread = {"reply_parameters": {"message_id": batch["message_id"], "allow_sending_without_reply": True}} if chat_id == batch['chat_id'] else {}
+                    result = await self.send_ui("sendMessage", chat_id, text=text, **thread, **options)
                     message_id = result["message_id"]
                     self.store.record("telegram_progress_created", batch_id=batch_id, message_id=message_id)
             self.store.progress_saved(batch_id, message_id, signature, done, observed, page=batch["page"])
@@ -240,10 +254,12 @@ class Telegram:
                 updates = await self.call("getUpdates", offset=self.store.get("telegram_offset", 0), timeout=25, allowed_updates=["message", "callback_query"])
                 for update in updates:
                     await self.process_update(update)
+                self.store.health('telegram_poll', 'ok')
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self.store.record("telegram_poll_failed", error=safe_error(exc))
+                self.store.health('telegram_poll', 'error', reason=safe_error(exc))
                 if "konflik" in str(exc):
                     raise
                 await asyncio.sleep(5)
@@ -252,6 +268,7 @@ class Telegram:
         self.store.track_active_batches()
         while True:
             await self.flush_ui()
+            self.store.health('telegram_outbox', 'ok')
             await asyncio.sleep(1)
 
     async def flush_ui(self):
@@ -269,7 +286,8 @@ class Telegram:
                     self.store.record('telegram_send_failed', outbox_id=item['id'], error=safe_error(exc))
                     if getattr(exc, 'code', None) in {400, 403, 404}:
                         self.store.mark_notified(item['id'], delivered=False)
-                        self.store.record('telegram_notification_unreachable', outbox_id=item['id'])
+                        recoverable = getattr(exc, 'code', None) == 403 or 'chat not found' in str(exc).lower()
+                        self.store.record('telegram_notification_unreachable', outbox_id=item['id'], recoverable=recoverable)
                         continue
                     with self.store.tx() as connection:
                         connection.execute("""INSERT INTO telegram_delivery_retry VALUES(?,?,1)

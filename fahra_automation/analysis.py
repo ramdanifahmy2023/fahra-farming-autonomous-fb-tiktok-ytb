@@ -11,6 +11,7 @@ import httpx
 from .config import ConfigurationError
 from .captioning import DELIVERY_PROMPT, EDITOR_PROMPT, POLICY_VERSION, SYSTEM_PROMPT, editorial_issues
 from .hook import layout_hook
+from .ai_usage import post
 
 
 class LowConfidenceError(ValueError):
@@ -18,8 +19,9 @@ class LowConfidenceError(ValueError):
 
 
 class Analyzer:
-    def __init__(self, config, media):
+    def __init__(self, config, media, store=None):
         self.config, self.media = config, media
+        self.store = store
 
     def ready(self):
         cfg = self.config.section("ai")
@@ -87,7 +89,8 @@ class Analyzer:
             messages = [{"role": "system", "content": SYSTEM_PROMPT if stage == "observe" else EDITOR_PROMPT},
                         {"role": "user", "content": content}]
             for attempt in range(2):
-                r = await client.post("chat/completions", json={"model": trace["model"], "messages": messages,
+                r = await post(client, store=self.store, operation='caption:' + stage, subject=job.get('id'),
+                    payload={"model": trace["model"], "messages": messages,
                     "response_format": {"type": "json_object"}})
                 r.raise_for_status()
                 response = r.json()
@@ -210,7 +213,8 @@ class Analyzer:
         async with httpx.AsyncClient(base_url=cfg['base_url'].rstrip('/') + '/',
                                     headers={'Authorization': 'Bearer ' + self.config.ai_key()}, timeout=180) as client:
             for attempt in range(2):
-                response = await client.post('chat/completions', json={'model': cfg['model'],
+                response = await post(client, store=self.store, operation='delivery_metadata', subject=job['id'],
+                    payload={'model': cfg['model'],
                     'messages': messages, 'response_format': {'type': 'json_object'}})
                 response.raise_for_status()
                 body = response.json()

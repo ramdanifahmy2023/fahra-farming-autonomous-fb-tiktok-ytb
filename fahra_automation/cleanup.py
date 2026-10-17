@@ -164,6 +164,47 @@ class Cleaner:
             return [(a['id'], a['payload'], by_asset[a['id']], json.loads(a['required_destinations']) if isinstance(a.get('required_destinations'), str) else a.get('required_destinations', [])) for a in snapshot['assets']]
         return [(j['id'], j['payload'], [j], False) for j in snapshot['jobs']]
 
+    def media_scope(self, identity, payload, banks):
+        origin = payload.get('legacy_origin')
+        if not origin:
+            return self.config.runtime, banks[0]
+        with self.store.connect() as c:
+            mapping = c.execute("""SELECT legacy_id FROM legacy_mapping
+                WHERE origin=? AND kind='asset' AND new_id=?""", (origin, identity)).fetchone()
+        if not mapping or mapping[0] != identity or origin not in {'tiktok','fb-ytb'}:
+            raise CleanupBlocked('Pemetaan asset legacy belum terbukti.')
+        if origin not in self._migration_scopes:
+            report = self.store.get('migration_report', {})
+            sources = [s for s in report.get('sources', []) if s.get('origin') == origin]
+            if len(sources) != 1:
+                raise CleanupBlocked('Manifest migrasi legacy tidak unik.')
+            archived = Path(sources[0]['snapshot'])
+            regular_file(archived, self.config.runtime / 'migrations')
+            manifest_path = archived.parent / 'manifest.json'
+            regular_file(manifest_path, self.config.runtime / 'migrations')
+            manifest = json.loads(manifest_path.read_text())
+            entries = [s for s in manifest.get('sources', []) if s.get('origin') == origin]
+            if (manifest.get('id') != self.store.get('migration_id') or len(entries) != 1
+                    or entries[0]['file'] != archived.name
+                    or entries[0]['sha256'] != sources[0]['sha256']
+                    or fingerprint(archived, self.config.runtime / 'migrations')['sha256'] != sources[0]['sha256']):
+                raise CleanupBlocked('Bukti snapshot migrasi berubah.')
+            root = Path(entries[0]['root']).resolve()
+            expected = self.config.path(self.config.section('workflow')['legacy_roots'][0 if origin == 'tiktok' else 1]).resolve()
+            peers = [Path(p).resolve() for p in self.settings()['peer_roots']]
+            if root != expected or root not in peers:
+                raise CleanupBlocked('Bank asal legacy di luar workspace yang diperiksa.')
+            self._migration_scopes[origin] = (root / 'runtime', banks[peers.index(root) + 1], archived)
+        media_runtime, bank, archived = self._migration_scopes[origin]
+        with closing(sqlite3.connect(archived.as_uri() + '?mode=ro', uri=True)) as connection:
+            tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            table = 'assets' if 'assets' in tables else 'jobs'
+            original = connection.execute('SELECT payload FROM ' + table + ' WHERE id=?', (mapping[0],)).fetchone()
+        if not original or any(json.loads(original[0]).get(key) != payload.get(key)
+                               for key in ('bank_path','render_path','source_path','source_sha256','render_sha256')):
+            raise CleanupBlocked('File media tidak cocok dengan asset pada snapshot migrasi.')
+        return media_runtime, bank
+
     def group_plan(self, identity, payload, jobs, paired, snapshot, references, banks, mcp, at):
         if not re.fullmatch(r'[0-9a-f]{32}', identity):
             raise CleanupBlocked('ID media tidak valid.')
@@ -196,7 +237,8 @@ class Cleaner:
         eligible_at = max(times) + timedelta(hours=self.settings()['retention_hours'])
         if at < eligible_at:
             return {'id': identity, 'state': 'retention', 'eligible_at': iso(eligible_at), 'files': []}
-        folder = self.config.runtime / 'media' / identity
+        media_runtime, bank_root = self.media_scope(identity, payload, banks)
+        folder = media_runtime / 'media' / identity
         work_files = [Path(payload.get('source_path', '')), folder / 'final.mp4', folder / 'analysis/speech.wav']
         if all(not path.exists() and not path.is_symlink() for path in work_files):
             return {'id': identity, 'job_ids': sorted(j['id'] for j in jobs), 'state': 'clean',
@@ -207,14 +249,14 @@ class Cleaner:
             raise CleanupBlocked('ID file Drive tidak valid.')
         relative = Path(payload.get('drive_relative_path', ''))
         bank = Path(payload.get('bank_path', ''))
-        if relative.is_absolute() or '..' in relative.parts or bank != banks[0] / relative:
+        if relative.is_absolute() or '..' in relative.parts or bank != bank_root / relative:
             raise CleanupBlocked('Lokasi bank konten tidak cocok dengan manifest.')
-        backup = fingerprint(bank, banks[0])
+        backup = fingerprint(bank, bank_root)
         if backup['sha256'] != payload['render_sha256']:
             raise CleanupBlocked('Salinan bank konten berubah atau belum lengkap.')
         for i in range(6):
             frame = folder / 'analysis' / f'frame-{i}.jpg'
-            regular_file(frame, self.config.runtime)
+            regular_file(frame, media_runtime)
             data = frame.read_bytes()
             if len(data) < 100 or not data.startswith(b'\xff\xd8') or not data.endswith(b'\xff\xd9'):
                 raise CleanupBlocked('Enam frame konteks komentar belum lengkap/valid.')
@@ -235,8 +277,8 @@ class Cleaner:
         if render != folder / 'final.mp4':
             raise CleanupBlocked('Hasil render bukan file kerja milik media ini.')
         candidates = [(source, mcp, 'source', payload.get('source_sha256')),
-                      (render, self.config.runtime, 'render', payload['render_sha256']),
-                      (folder / 'analysis/speech.wav', self.config.runtime, 'audio', None)]
+                      (render, media_runtime, 'render', payload['render_sha256']),
+                      (folder / 'analysis/speech.wav', media_runtime, 'audio', None)]
         files, absent = [], []
         for path, boundary, kind, expected in candidates:
             if any(path.is_relative_to(b) or path.resolve().is_relative_to(b.resolve()) for b in banks):
@@ -257,6 +299,7 @@ class Cleaner:
                 'drive_file_id': payload['drive_file_id'], 'backup': backup, 'bank_path': str(bank)}
 
     def plan(self, at=None, only_id=None):
+        self._migration_scopes = {}
         at = at or now()
         roots, banks, mcp = self.scope()
         snapshot, refs = self.inventory(roots)
@@ -374,7 +417,11 @@ class Cleaner:
             try:
                 if self.settings().get('enabled', False):
                     await self.sweep()
+                    self.store.health('cleanup', 'ok')
+                else:
+                    self.store.health('cleanup', 'waiting')
             except Exception as exc:
                 self.store.record('cleanup_failed', error=safe_error(exc))
+                self.store.health('cleanup', 'error', reason=safe_error(exc))
             interval = self.config.data.get('cleanup', {}).get('interval_seconds', 3600)
             await asyncio.sleep(interval if type(interval) is int and interval >= 300 else 3600)

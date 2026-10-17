@@ -59,7 +59,9 @@ CLI `report preview|status|enable|disable|pilot` tersedia; [prosedur laporan](do
 
 ## Paket dan operasi
 
-Paket Python `fahra_automation`, Python 3.14, SQLite schema v1. Dependency dikunci pada requirements.lock. LaunchAgent `id.fahra.automation.social`; database runtime/workflow.sqlite3. Petunjuk perintah, cutover, dan pemulihan ada di [OPERATIONS.md](docs/OPERATIONS.md).
+Paket Python `fahra_automation`, Python minimum 3.14, SQLite schema v2. Dependency dikunci pada requirements.lock. LaunchAgent `id.fahra.automation.social`; database runtime/workflow.sqlite3. Petunjuk perintah, cutover, dan pemulihan ada di [OPERATIONS.md](docs/OPERATIONS.md).
+
+Perbaikan audit 18 Oktober menambah `health`, `delivery inspect|reconcile|resolve|retry-local ID`, `reply inspect|reconcile|resolve ID`, dan `restore FOLDER_BACKUP FOLDER_BARU`. Status/inspect/health tidak menginisialisasi database tulis. Reconcile/resolve hanya GET provider dan pencocokan lokal; tidak POST ulang. Backup berupa bundle beserta jurnal publikasi/reply/laporan dan checksum; restore selalu shadow, paused, reply/report nonaktif, tanpa ownership aktif. Collector content metrics opsional berbeda dari laporan TikTok 08.00; `metrics.enabled=false` sampai operasi stabil. Perubahan file config memerlukan restart.
 
 ```sh
 python3.14 -m venv .venv

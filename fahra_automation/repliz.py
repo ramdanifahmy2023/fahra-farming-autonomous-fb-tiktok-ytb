@@ -97,6 +97,7 @@ class Repliz:
     def __init__(self, config, client=None, limiter=None):
         self.config = config
         self.limiter = limiter
+        self.observer = None
         self.client = client or httpx.AsyncClient(
             base_url=config.section('repliz')['base_url'], auth=config.repliz_credentials(), timeout=45)
 
@@ -111,8 +112,11 @@ class Repliz:
         if self.limiter is None:
             cfg = self.config.section('repliz')
             self.limiter = SharedRateLimiter.shared(cfg['base_url'], cfg.get('min_request_interval_seconds', .65))
+        waiting = time.monotonic()
         async with self.limiter.lock:
             await self.limiter.wait()
+            if self.observer is not None:
+                self.observer.timing('repliz.limiter', (time.monotonic()-waiting)*1000)
             if mutation:
                 try:
                     self.config.require_live_action()
@@ -120,7 +124,12 @@ class Repliz:
                     raise MutationNotSent(str(exc)) from None
             if before_send is not None:
                 before_send()
-            response = await self.client.request(method, path, **kwargs)
+            started = time.monotonic()
+            try:
+                response = await self.client.request(method, path, **kwargs)
+            finally:
+                if self.observer is not None:
+                    self.observer.timing('repliz.' + method, (time.monotonic()-started)*1000)
             if response.status_code == 429:
                 try:
                     retry_after = max(1, min(86400, float(response.headers.get('retry-after', '60'))))
@@ -280,7 +289,7 @@ class Repliz:
                 'medias': [{'type': 'video', 'url': job['payload']['drive_url'], 'alt': 'fa:' + job['id']}],
                 'accountId': job['account_id'], 'scheduleAt': iso(when), 'additionalInfo': info}
 
-    async def create(self, payload, platform):
+    async def create(self, payload, platform, *, before_send=None):
         if platform not in PLATFORMS or not payload.get('accountId') or payload['accountId'] == EXCLUDED_ACCOUNT_ID:
             raise ConfigurationError('Tujuan publikasi tidak diizinkan.')
         if payload.get('type') != ('reel' if platform == 'facebook' else 'video'):
@@ -288,6 +297,11 @@ class Repliz:
         def check_time():
             if timestamp(payload.get('scheduleAt')) <= now():
                 raise MutationNotSent('Slot jadwal sudah lewat selama menunggu budget API.')
+            if before_send is not None:
+                try:
+                    before_send()
+                except ConfigurationError as exc:
+                    raise MutationNotSent(safe_error(exc)) from None
         data = await self.request('POST', '/public/schedule', json=payload, before_send=check_time)
         data = data.get('data', data)
         if not isinstance(data, dict) or not isinstance(data.get('scheduleId'), str) or not data['scheduleId']:

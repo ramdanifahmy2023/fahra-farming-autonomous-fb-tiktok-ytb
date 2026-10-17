@@ -75,7 +75,7 @@ class ReplizContractTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_never_applies_accounts_when_schedule_is_incomplete(self):
         remote = self.remote()
-        account = {'id': 'facebook-1', 'type': 'facebook', 'isConnected': True}
+        account = {'id': 'facebook-1', 'type': 'facebook', 'isConnected': True, 'publishEligible': True}
         store = SimpleNamespace(begin_sync=Mock(return_value=1), accounts=Mock(return_value=[]), apply_snapshot=Mock())
         remote.pages = AsyncMock(side_effect=[[account], [{'id': 's', 'accountId': 'facebook-1', 'type': 'reel', 'scheduleAt': iso()}]])
         with self.assertRaises(ValueError):
@@ -85,11 +85,11 @@ class ReplizContractTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_filters_excluded_and_keeps_error_quota_records(self):
         remote = self.remote()
-        accounts = [{'id': p + '-1', 'username': 'valid', 'type': p, 'isConnected': True}
+        accounts = [{'id': p + '-1', 'username': 'valid', 'type': p, 'isConnected': True, 'publishEligible': True}
                     for p in ('tiktok', 'facebook', 'youtube')]
-        accounts += [{'id': EXCLUDED_ACCOUNT_ID, 'type': 'tiktok', 'isConnected': True},
-                     {'id': 'blocked-name', 'type': 'tiktok', 'username': 'iq7fanspage', 'isConnected': True},
-                     {'id': 'ig', 'type': 'instagram', 'isConnected': True}]
+        accounts += [{'id': EXCLUDED_ACCOUNT_ID, 'type': 'tiktok', 'isConnected': True, 'publishEligible': True},
+                     {'id': 'blocked-name', 'type': 'tiktok', 'username': 'iq7fanspage', 'isConnected': True, 'publishEligible': True},
+                     {'id': 'ig', 'type': 'instagram', 'isConnected': True, 'publishEligible': True}]
         schedule = {'id': 's', 'accountId': 'youtube-1', 'type': 'video', 'status': 'error', 'scheduleAt': iso()}
         store = SimpleNamespace(begin_sync=Mock(return_value=3), accounts=Mock(return_value=[]), apply_snapshot=Mock(return_value={'generation': 4}))
         remote.pages = AsyncMock(side_effect=[accounts, [schedule]])

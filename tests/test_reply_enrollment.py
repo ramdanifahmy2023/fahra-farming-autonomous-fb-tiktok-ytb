@@ -34,7 +34,7 @@ class ReplyEnrollmentTest(unittest.TestCase):
         self.accounts = [
             {'id': f'{platform}-{number:02d}', 'type': platform,
              'username': f'{platform}{number}', 'name': f'{platform} {number}',
-             'isConnected': True}
+             'isConnected': True, 'publishEligible': True}
             for platform, count in [('tiktok', 46), ('facebook', 14), ('youtube', 4)]
             for number in range(count)
         ]

@@ -142,7 +142,7 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
     async def test_post_create_timeout_is_reconciled_then_never_recreated(self):
         self.config.data = copy.deepcopy(self.config.data)
         self.config.data['workflow']['runtime_dir'] = self.temp.name
-        account = {**self.account, 'isConnected': True}
+        account = {**self.account, 'isConnected': True, 'publishEligible': True}
         account['config']['reply']['isActive'] = True
         overrides = []
         async def request(method, path, **kwargs):
@@ -162,7 +162,7 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(x.args[0] == 'POST' for x in self.api.request.call_args_list), 1)
 
     async def test_post_429_definite_rejection_allows_later_retry(self):
-        account = {**self.account, 'isConnected': True}
+        account = {**self.account, 'isConnected': True, 'publishEligible': True}
         overrides = []
         error = ReplizError(429, 'limited', retry_after=60)
         async def request(method, path, **kwargs):
@@ -232,7 +232,7 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(verify_config(actual, expected))
 
     async def test_existing_youtube_profile_runtime_changes_never_write(self):
-        account = {**self.account, 'type': 'youtube', 'isConnected': True}
+        account = {**self.account, 'type': 'youtube', 'isConnected': True, 'publishEligible': True}
         config = custom_reply_config(account['config'], self.profile, 'youtube')
         row = {'id': 'override1', 'accountId': account['id'], 'detail': {'id': 'post1'}, 'config': config}
         self.api.pages = AsyncMock(side_effect=lambda *args: [copy.deepcopy(row)])
@@ -253,7 +253,7 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(config['reply']['isActive'])
 
     async def test_youtube_create_readback_pending_reconciles_without_second_write(self):
-        account = {**self.account, 'type': 'youtube', 'isConnected': True}
+        account = {**self.account, 'type': 'youtube', 'isConnected': True, 'publishEligible': True}
         rows = []
         async def request(method, path, **kwargs):
             if method == 'GET':

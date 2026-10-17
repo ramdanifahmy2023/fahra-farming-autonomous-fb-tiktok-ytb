@@ -34,7 +34,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.config.require_live_action = Mock()
         self.store = Store(self.root / 'runtime/workflow.sqlite3')
         self.accounts = [{'id': p + '-one', 'username': p + '_person', 'name': p,
-                          'type': p, 'isConnected': True} for p in ('tiktok', 'facebook', 'youtube')]
+                          'type': p, 'isConnected': True, 'publishEligible': True} for p in ('tiktok', 'facebook', 'youtube')]
         self.store.apply_snapshot(self.accounts, [], '2026-10-16', '2027-10-17')
         self.store.enqueue(1, 1, 1, [('https://www.instagram.com/reel/FIXTURE/', 'FIXTURE')])
         self.asset_id = self.rows()[0]['asset_id']

@@ -66,6 +66,7 @@ async def run(config, store):
     config.telegram_token()
     with process_lock(config.runtime / 'worker.lock'), legacy_locks(config):
         repliz = Repliz(config)
+        repliz.observer = store
         telegram = None
         try:
             config.require_live_action()
@@ -79,6 +80,8 @@ async def run(config, store):
             from .account_reports import AccountReports
             reports = AccountReports(config, store, repliz, telegram)
             telegram.reports = reports
+            from .metrics import ContentMetrics
+            metrics = ContentMetrics(config, store, repliz)
             stop = asyncio.Event()
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -87,15 +90,18 @@ async def run(config, store):
             async def backups():
                 while True:
                     try:
-                        await asyncio.to_thread(store.backup, config.path(config.section('workflow')['backup_dir']))
+                        from .backup import create
+                        await asyncio.to_thread(create, config, store, config.path(config.section('workflow')['backup_dir']))
+                        store.health('backup', 'ok')
                     except Exception as exc:
                         store.record('backup_failed', error=safe_error(exc))
+                        store.health('backup', 'error', reason=safe_error(exc))
                     await asyncio.sleep(config.section('workflow')['backup_interval_seconds'])
             async def operational_workers():
                 await wait_for_startup(config, store, repliz, replies)
                 async with asyncio.TaskGroup() as operations:
                     for worker in (pipeline.worker_loop, pipeline.monitor_loop, pipeline.sync_loop,
-                                   cleaner.loop, replies.polling_loop, replies.worker_loop, replies.profile_loop):
+                                   cleaner.loop, replies.polling_loop, replies.worker_loop, replies.profile_loop, metrics.loop):
                         operations.create_task(worker())
             print('Workflow berjalan. Status dan jejak tersimpan di SQLite.', flush=True)
             async with asyncio.TaskGroup() as group:
@@ -180,9 +186,12 @@ async def preview(config, production_store, args):
     media, drive = Media(config), Drive(config)
     print("Preview: download melalui MCP…", flush=True)
     downloaded = await Downloader(config).download(job, media_store)
-    media_store.checkpoint(job["id"], "downloaded", payload={**downloaded, "source_sha256": digest_file(Path(downloaded["source_path"]))})
+    source_probe = await asyncio.to_thread(media.probe, Path(downloaded["source_path"]))
+    media.validate_shared(source_probe)
+    media_store.checkpoint(job["id"], "downloaded", payload={**downloaded, 'source_probe': source_probe,
+                          "source_sha256": digest_file(Path(downloaded["source_path"]))})
     print("Preview: analisis visual dan transkrip…", flush=True)
-    analysis = await Analyzer(config, media).analyze(store.asset(job["id"]), folder / "analysis",
+    analysis = await Analyzer(config, media, store).analyze(store.asset(job["id"]), folder / "analysis",
                                                    recent_captions=production_store.recent_captions(job["id"]))
     media_store.checkpoint(job["id"], "analyzed", payload=analysis)
     target = folder / "final.mp4"
@@ -269,7 +278,7 @@ def main():
     parser = argparse.ArgumentParser(description="Workflow Telegram, Instagram, Drive, Repliz.")
     parser.add_argument("--root", type=Path)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "run", "doctor", "status", "accounts", "sync", "pair-code", "drive-login", "setup-whisper", "backup"):
+    for name in ("init", "run", "doctor", "status", "health", "accounts", "sync", "pair-code", "drive-login", "setup-whisper", "backup"):
         sub.add_parser(name)
     p = sub.add_parser("preview")
     p.add_argument("url")
@@ -288,7 +297,14 @@ def main():
     p.add_argument('--final', action='store_true')
     p.add_argument('--staging', action='store_true')
     p = sub.add_parser('reply')
-    p.add_argument('action', choices=['status','pause','resume'])
+    p.add_argument('action', choices=['status','pause','resume','inspect','reconcile','resolve'])
+    p.add_argument('identity', nargs='?')
+    p = sub.add_parser('delivery')
+    p.add_argument('action', choices=['inspect','reconcile','resolve','retry-local'])
+    p.add_argument('identity')
+    p = sub.add_parser('restore')
+    p.add_argument('folder', type=Path)
+    p.add_argument('destination', type=Path)
     p = sub.add_parser('report', help='Laporan TikTok harian ke chat pribadi admin.')
     p.add_argument('action', choices=['preview', 'status', 'enable', 'disable', 'pilot'])
     p.add_argument('--credentials-from', type=Path, help='Folder Credential untuk preview GET terisolasi.')
@@ -301,8 +317,38 @@ def main():
             from .report_cli import preview as report_preview
             output(asyncio.run(report_preview(config, args.credentials_from)))
             return 0
-        store = initialize(config)
-        if args.command == 'report':
+        if args.command == 'service':
+            service(config, args.action)
+            return 0
+        if args.command == 'restore':
+            from .backup import restore
+            output({'restored_shadow': str(restore(args.folder, args.destination))})
+            return 0
+        readonly = (args.command in {'status','accounts','events','health'}
+                    or args.command == 'cleanup' and not args.apply
+                    or args.command == 'report' and args.action == 'status'
+                    or args.command in {'reply','delivery'} and args.action in {'status','inspect'})
+        store = Store(config.runtime / 'workflow.sqlite3', readonly=True) if readonly else initialize(config)
+        if args.command == 'health':
+            from .health import report
+            output(report(store))
+        elif args.command in {'delivery','reply'} and args.action in {'inspect','reconcile','resolve','retry-local'}:
+            from . import recovery
+            if not args.identity:
+                raise ValueError('ID pekerjaan wajib diberikan.')
+            if args.action == 'inspect':
+                output(recovery.inspect(config, store, args.command, args.identity))
+            elif args.action == 'retry-local':
+                job = store.find_job(args.identity)
+                entry = AttemptJournal(config, readonly=True).state(job['id']) if job else None
+                if entry and entry['state'] not in {'not_sent','rejected'}:
+                    raise ValueError('Jurnal kiriman belum aman untuk retry. Gunakan reconcile.')
+                if not job or not store.retry(job['id']):
+                    raise ValueError('Retry ditolak: periksa status, jurnal, dan sumber melalui inspect.')
+                output(recovery.inspect(config, store, args.command, job['id']))
+            else:
+                output(asyncio.run(recovery.reconcile(config, store, args.command, args.identity)))
+        elif args.command == 'report':
             from .report_cli import operate
             output(asyncio.run(operate(config, store, args.action)))
         elif args.command == 'migrate':
@@ -357,7 +403,8 @@ def main():
         elif args.command == "accounts":
             output(store.accounts())
         elif args.command == "backup":
-            output({"backup": str(store.backup(config.path(config.section("workflow")["backup_dir"])) )})
+            from .backup import create
+            output({"backup": str(create(config, store, config.path(config.section("workflow")["backup_dir"])))})
         elif args.command == "events":
             with store.connect() as c:
                 output([dict(r) for r in c.execute("SELECT * FROM events ORDER BY seq DESC LIMIT ?", (min(args.limit, 1000),))])

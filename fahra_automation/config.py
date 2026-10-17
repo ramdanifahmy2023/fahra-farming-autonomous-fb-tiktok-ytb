@@ -65,6 +65,24 @@ class Config:
             raise ConfigurationError('Runtime harus berada di folder runtime proyek ini.')
         if not 0 <= wf['window_start'] < wf['window_end'] <= 24:
             raise ConfigurationError('Jendela jadwal tidak valid.')
+        for key, minimum, maximum in (
+                ('schedule_lead_seconds', 30, 3600), ('max_attempts', 1, 10),
+                ('sync_interval_seconds', 30, 600), ('max_batch_links', 1, 100),
+                ('max_pending_assets', 1, 10000), ('render_horizon_hours', 1, 168),
+                ('backup_interval_seconds', 300, 86400), ('min_free_disk_gb', 1, 10000)):
+            if type(wf.get(key)) is not int or not minimum <= wf[key] <= maximum:
+                raise ConfigurationError(f'Konfigurasi workflow.{key} harus {minimum}–{maximum}.')
+        for section, key in (('workflow','publish_enabled'), ('telegram','public_ingest'),
+                             ('cleanup','enabled'), ('ai','transcription_enabled')):
+            if type(data[section].get(key)) is not bool:
+                raise ConfigurationError(f'Konfigurasi {section}.{key} harus boolean.')
+        if type(data.get('metrics', {}).get('enabled', False)) is not bool:
+            raise ConfigurationError('Konfigurasi metrics.enabled harus boolean.')
+        for key in ('daily_limit', 'max_age_hours', 'poll_seconds'):
+            if type(data['reply'].get(key)) is not int or data['reply'][key] <= 0:
+                raise ConfigurationError(f'Konfigurasi reply.{key} harus bilangan positif.')
+        if data['cleanup']['retention_hours'] < 24 or data['cleanup']['interval_seconds'] < 300:
+            raise ConfigurationError('Cleanup memerlukan retensi 24 jam dan interval 300 detik atau lebih.')
         return config
 
     def section(self, name):

@@ -67,6 +67,9 @@ daily_limit = 20
 max_age_hours = 48
 poll_seconds = 120
 
+[metrics]
+enabled = false
+
 [drive]
 mode = "synced_public"
 sync_dir = "Bank-konten-fahra-automation-tiktok-ig-fb-ytb"

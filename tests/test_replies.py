@@ -26,7 +26,7 @@ def raw_comment(number='1'):
 class FakeAPI:
     def __init__(self):
         self.account = {'id': 'account-a', 'type': 'tiktok', 'username': 'testaccount', 'name': 'test',
-                        'isConnected': True, 'generatedId': 'owner-1',
+                        'isConnected': True, 'publishEligible': True, 'generatedId': 'owner-1',
                         'config': {'reply': {'isActive': False}, 'delete': {'isActive': False}}}
         self.rows = {'inbox-1': raw_comment()}
         self.threads = {}

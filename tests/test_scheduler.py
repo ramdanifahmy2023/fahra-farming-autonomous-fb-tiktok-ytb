@@ -14,7 +14,7 @@ from fahra_automation.util import iso
 
 def account(platform, number=0, **changes):
     return {'id': f'{platform}-{number}', 'username': f'user{number}', 'name': f'{platform} {number}',
-            'type': platform, 'isConnected': True, **changes}
+            'type': platform, 'isConnected': True, 'publishEligible': True, **changes}
 
 
 class SchedulerTest(unittest.TestCase):

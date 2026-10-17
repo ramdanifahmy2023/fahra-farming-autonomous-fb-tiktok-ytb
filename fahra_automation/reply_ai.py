@@ -134,8 +134,9 @@ def validate_reply(data, context, hint, recent=()):
 
 
 class ReplyAI:
-    def __init__(self, config):
+    def __init__(self, config, store=None):
         self.config = config
+        self.store = store
 
     async def generate(self, system, content, validator, folder, name):
         cfg = self.config.section('ai')
@@ -144,7 +145,9 @@ class ReplyAI:
         async with httpx.AsyncClient(base_url=cfg['base_url'].rstrip('/') + '/',
                                     headers={'Authorization': 'Bearer ' + self.config.ai_key()}, timeout=180) as client:
             for attempt in range(2):
-                response = await client.post('chat/completions', json={'model': cfg['model'], 'messages': messages,
+                from .ai_usage import post
+                response = await post(client, store=self.store, operation='reply:' + name,
+                    payload={'model': cfg['model'], 'messages': messages,
                                                                       'response_format': {'type': 'json_object'}})
                 response.raise_for_status()
                 body = response.json()

@@ -29,8 +29,9 @@ def verify_ownership(config):
     if any(service['loaded'] for service in legacy_services(config)):
         raise ConfigurationError('Workflow lama masih terpasang aktif. Pengiriman baru ditahan.')
     from .db import Store
-    store = Store(config.runtime / 'workflow.sqlite3')
-    if store.get('migration_id') != value['migration_id'] or store.get('journal_restore_unresolved', []):
+    store = Store(config.runtime / 'workflow.sqlite3', readonly=True)
+    if (store.get('migration_id') != value['migration_id'] or store.get('journal_restore_unresolved', [])
+            or store.get('restore_requires_reconciliation', False)):
         raise ConfigurationError('Database/attempt journal belum cocok dengan bukti cutover.')
 
 

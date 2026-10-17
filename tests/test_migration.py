@@ -35,7 +35,7 @@ class MigrationTests(unittest.TestCase):
         for origin,platforms in [('tiktok',['tiktok']),('fb-ytb',['facebook','youtube'])]:
             path=self.root/(origin+'.sqlite3')
             source=Store(path)
-            accounts=[{'id':p+'-account','type':p,'username':p+'user','name':p+' account','isConnected':True} for p in platforms]
+            accounts=[{'id':p+'-account','type':p,'username':p+'user','name':p+' account','isConnected':True, 'publishEligible':True} for p in platforms]
             self.accounts.extend(accounts)
             source.apply_snapshot(accounts,[],self.at.date().isoformat(),(self.at.date()+timedelta(days=2)).isoformat())
             source.enqueue(10,10,1,[('https://www.instagram.com/reel/same/','same')],required_destinations=platforms)
@@ -167,7 +167,7 @@ class MigrationTests(unittest.TestCase):
             import_snapshots(self.store,self.root)
 
     def doctor_pool(self):
-        accounts=self.accounts+[{'id':'doctor-only','type':'youtube','username':'preview','isConnected':True}]
+        accounts=self.accounts+[{'id':'doctor-only','type':'youtube','username':'preview','isConnected':True, 'publishEligible':True}]
         schedule={'id':'doctor-external','accountId':'tiktok-account','type':'video','status':'pending',
                   'title':'external','scheduleAt':iso(self.at+timedelta(hours=3))}
         self.store.apply_snapshot(accounts,[schedule],self.at.date().isoformat(),(self.at.date()+timedelta(days=2)).isoformat())

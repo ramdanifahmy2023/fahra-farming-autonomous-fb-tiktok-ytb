@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import math
+import shutil
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .config import Config, ConfigurationError
+from .config import ConfigurationError
 from .db import ZONE, AssetStore, PREPARE
-from .downloader import DownloadUncertain
+from .downloader import DownloadUncertain, DownloadFailed
 from .repliz import AccountUnavailable, MutationNotSent, ReplizError, account_id, publication_details, timestamp
 from .util import digest_file, iso, now, safe_error
 
@@ -16,6 +18,8 @@ class Pipeline:
     def __init__(self, config, store, repliz, downloader, media, analyzer, drive, *, personas=None, journal=None):
         self.config, self.store, self.repliz = config, store, repliz
         self.downloader, self.media, self.analyzer, self.drive = downloader, media, analyzer, drive
+        if analyzer is not None and hasattr(analyzer, 'store'):
+            analyzer.store = store
         if personas is None:
             from .personas import PersonaService
             personas = PersonaService(config, store, analyzer)
@@ -102,7 +106,8 @@ class Pipeline:
             self.journal.mark(sid, 'not_sent')
             raise
         try:
-            schedule_id = await self.repliz.create(body, job["platform"])
+            schedule_id = await self.repliz.create(body, job["platform"],
+                before_send=lambda: self.store.validate_submission(sid, body, generation))
         except MutationNotSent as exc:
             self.journal.mark(sid, 'not_sent', error=safe_error(exc))
             self.store.reject_submission(sid, safe_error(exc))
@@ -116,6 +121,8 @@ class Pipeline:
                 retry_at = iso(now() + timedelta(seconds=max(60, exc.retry_after)))
                 if exc.status == 429:
                     self.store.defer_account(job['account_id'], retry_at, safe_error(exc))
+                elif exc.status in {401, 403}:
+                    self.store.capability(job['account_id'], 'publish', 'held', 'provider_denied', safe_error(exc))
                 self.store.checkpoint(sid, leased=0, last_error=safe_error(exc), next_attempt=retry_at)
                 return
             self.journal.mark(sid, 'unknown', error=safe_error(exc))
@@ -136,6 +143,8 @@ class Pipeline:
                               leased=0, payload={"next_poll": iso(now() + timedelta(seconds=30))})
 
     async def prepare(self, delivery):
+        if shutil.disk_usage(self.store.path.parent).free < self.config.section('workflow').get('min_free_disk_gb', 10) * 1024**3:
+            raise ConfigurationError('Ruang disk kurang. Persiapan menunggu ruang tersedia.')
         media_store = AssetStore(self.store)
         job = self.store.asset(delivery["asset_id"])
         sid, state = job["id"], job["status"]
@@ -148,12 +157,16 @@ class Pipeline:
         if state == "queued":
             result = await self.downloader.download(job, media_store)
             info = await self.local_stage(self.media.probe, result["source_path"])
+            media_store.checkpoint(sid, payload={**result, "source_probe": info})
+            self.media.validate_shared(info)
             digest = await self.local_stage(digest_file, Path(result["source_path"]))
             if self.store.duplicate_hash(sid, digest):
                 media_store.checkpoint(sid, "duplicate")
                 return
             media_store.checkpoint(sid, "downloaded", payload={**result, "source_probe": info, "source_sha256": digest})
         elif state == "downloaded":
+            info = job['payload'].get('source_probe') or await self.local_stage(self.media.probe, job['payload']['source_path'])
+            self.media.validate_shared(info)
             result = await self.analyzer.analyze(job, folder / "analysis", recent_captions=self.store.recent_captions(sid))
             media_store.checkpoint(sid, "analyzed", payload=result)
         elif state == "analyzed":
@@ -192,6 +205,7 @@ class Pipeline:
         raise ConfigurationError('URL tersimpan; download menunggu slot platform dalam horizon media.')
 
     async def handle(self, job):
+        started = time.monotonic()
         try:
             await self.step(job)
         except asyncio.CancelledError:
@@ -205,13 +219,27 @@ class Pipeline:
                 self.store.checkpoint(job["id"], leased=0, last_error=safe_error(exc))
                 return
             message = safe_error(exc)
+            if isinstance(exc, ReplizError) and exc.status in {401, 403} and current.get('account_id'):
+                self.store.capability(current['account_id'], 'publish', 'held', 'provider_denied', message)
+                self.store.checkpoint(job['id'], leased=0, last_error=message,
+                                      next_attempt=iso(now()+timedelta(seconds=60)))
+                return
             if isinstance(exc, ConfigurationError):
-                self.store.checkpoint(job["id"], leased=0, last_error=message, next_attempt=iso(now() + timedelta(seconds=60)))
+                if current['status'] in PREPARE - {'drive_ready'}:
+                    self.store.defer_asset(current['asset_id'], message)
+                else:
+                    self.store.checkpoint(job["id"], leased=0, last_error=message, next_attempt=iso(now() + timedelta(seconds=60)))
                 if current["last_error"] != message:
                     self.store.record("configuration_blocked", job["id"], error=message)
                     if not self.store.has_progress(job["batch_id"]):
                         self.store.notify("blocked:" + job["id"] + ":" + str(hash(message)), self.store.batch_chat(job),
                                           f"Video {job['id'][:8]} menunggu layanan: {message}")
+                return
+            if current['status'] in PREPARE - {'drive_ready'}:
+                self.store.fail_asset(current['asset_id'], exc,
+                    max_attempts=self.config.section('workflow')['max_attempts'],
+                    kind='source' if isinstance(exc, DownloadFailed) else
+                         'analysis' if current['status'] == 'downloaded' else 'media' if isinstance(exc, ValueError) else 'transient')
                 return
             attempts = current["attempts"] + 1
             terminal = isinstance(exc, ValueError) or attempts >= self.config.section("workflow")["max_attempts"]
@@ -222,10 +250,17 @@ class Pipeline:
             else:
                 self.store.checkpoint(job["id"], leased=0, attempts=attempts, last_error=message,
                                       next_attempt=iso(now() + timedelta(seconds=min(1800, 30 * 2 ** attempts))))
+        finally:
+            self.store.timing('stage.' + job['status'], (time.monotonic()-started)*1000)
 
-    async def monitor(self):
-        for job in self.store.pending_publications():
-            if job["payload"].get("next_poll", "") > iso():
+    async def monitor(self, job_id=None):
+        failures = []
+        for job in ([self.store.job(job_id)] if job_id else self.store.pending_publications()):
+            if job_id and (not job or job['status'] not in {'failed','scheduled','submitting','submit_unknown'}):
+                raise ValueError('Kiriman ini tidak memerlukan rekonsiliasi.')
+            if job_id and not job['schedule_id'] and not job['payload'].get('submission'):
+                raise ValueError('Belum ada intent kirim untuk dicocokkan.')
+            if not job_id and job["payload"].get("next_poll", "") > iso():
                 continue
             try:
                 self.store.checkpoint(job["id"], payload={"next_poll": iso(now() + timedelta(seconds=90))})
@@ -257,11 +292,14 @@ class Pipeline:
                 elif status == "error":
                     # Keep quota until an operator resolves the failed remote schedule; do not create another post.
                     self.store.checkpoint(job["id"], "failed", leased=0,
+                                          payload={'next_poll': iso(now() + timedelta(minutes=15)), 'failure_kind': 'provider'},
                                           last_error=safe_error(result.get("errorMessage", "Repliz melaporkan error")))
             except Exception as exc:
+                failures.append(safe_error(exc))
                 self.store.record("publication_poll_failed", job["id"], error=safe_error(exc))
         await self.share_link_reports()
         self.store.batch_reports()
+        self.store.health('publication_monitor', 'error' if failures else 'ok', reason='; '.join(failures))
 
     async def share_link_reports(self):
         # Also recover published jobs whose notification was interrupted by a restart.
@@ -286,12 +324,16 @@ class Pipeline:
 
     async def worker_loop(self):
         while True:
-            self.config.data = Config.load(self.config.root).data
             job = self.store.claim()
+            start = time.monotonic()
             if job:
                 await self.handle(job)
             else:
                 await asyncio.sleep(2)
+            current = self.store.job(job['id']) if job else None
+            state = ('error' if current['status'] == 'failed' else 'waiting') if current and current['last_error'] else 'ok'
+            self.store.health('media_worker', state, reason=current['last_error'] if current else '',
+                              duration_ms=(time.monotonic()-start)*1000, details={'job_id': job['id'] if job else None})
 
     async def monitor_loop(self):
         while True:
@@ -302,6 +344,8 @@ class Pipeline:
         while True:
             try:
                 await self.repliz.sync(self.store)
+                self.store.health('account_sync', 'ok')
             except Exception as exc:
                 self.store.record("repliz_sync_failed", error=safe_error(exc))
+                self.store.health('account_sync', 'error', reason=safe_error(exc))
             await asyncio.sleep(self.config.section("workflow")["sync_interval_seconds"])

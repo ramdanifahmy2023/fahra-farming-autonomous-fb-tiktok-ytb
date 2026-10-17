@@ -12,12 +12,29 @@ from mcp.client.stdio import stdio_client
 
 from .attribution import from_metadata, require_attribution
 from .config import ConfigurationError
-from .util import iso, normalize_url
+from .util import iso, normalize_url, exception_leaves, safe_error
 from .journal import AttemptJournal
 
 
 class DownloadUncertain(RuntimeError):
     """A start may have reached MCP; a proven job mapping is required before retry."""
+
+
+class DownloadFailed(ValueError):
+    """A recorded MCP job has ended without a usable video."""
+
+
+def download_failure(message):
+    detail = str(message).lower()
+    if 'no video' in detail or 'only photos' in detail:
+        reason = 'Sumber tidak menghasilkan video. Kirim link posting yang berisi video.'
+    elif 'certain audiences' in detail or 'not available to everyone' in detail:
+        reason = 'Akses sumber dibatasi. Gunakan video yang dapat diakses downloader.'
+    elif 'empty media response' in detail:
+        reason = 'Instagram mengembalikan data media kosong. Sumber perlu diperiksa sebelum diulang.'
+    else:
+        reason = 'Download selesai dengan kegagalan. Periksa sumber sebelum mencoba ulang.'
+    return DownloadFailed(reason + ' Detail: ' + safe_error(message))
 
 
 OWNER_METADATA_SCRIPT = r'''
@@ -73,10 +90,22 @@ class Downloader:
                "PW_DOCKER": cfg["docker"], "PW_VIDEO_MAX_HEIGHT": str(cfg["max_height"]),
                "INSTAGRAM_MCP_CONTAINER": cfg["container"]}
         params = StdioServerParameters(command="/bin/sh", args=[str(self.config.path(cfg["project_dir"]) / "start-mcp.sh")], env=env)
-        async with stdio_client(params) as (reader, writer):
-            async with ClientSession(reader, writer) as client:
-                await client.initialize()
-                yield client
+        try:
+            async with stdio_client(params) as (reader, writer):
+                async with ClientSession(reader, writer) as client:
+                    await client.initialize()
+                    yield client
+        except BaseExceptionGroup as exc:
+            leaves = exception_leaves(exc)
+            if any(isinstance(e, asyncio.CancelledError) for e in leaves):
+                raise asyncio.CancelledError() from None
+            if any(isinstance(e, DownloadUncertain) for e in leaves):
+                raise DownloadUncertain(safe_error(exc)) from None
+            if all(isinstance(e, ConfigurationError) for e in leaves):
+                raise ConfigurationError(safe_error(exc)) from None
+            if len(leaves) == 1:
+                raise leaves[0] from None
+            raise DownloadUncertain('Beberapa gangguan downloader perlu dicocokkan: ' + safe_error(exc)) from None
 
     @staticmethod
     async def call(client, name, arguments):
@@ -160,7 +189,7 @@ class Downloader:
             while True:
                 state = await self.call(client, "instagram_download_status", {"job_id": job_id, "wait_seconds": 20})
                 if state["status"] == "failed":
-                    raise RuntimeError(state.get("error", "Download gagal"))
+                    raise download_failure(state.get("error", "Download gagal"))
                 if state["status"] in {"completed", "partial"}:
                     if state['status'] == 'partial':
                         raise DownloadUncertain('Manifest MCP partial ditahan; belum sah untuk publikasi/cleanup.')

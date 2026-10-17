@@ -41,7 +41,7 @@ class TelegramUITest(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.store = Store(Path(self.temp.name) / "ui.db")
-        self.store.apply_snapshot([{"id": p, "username": "akun_satu", "name": "Akun", "type": p, "isConnected": True} for p in ("tiktok", "facebook", "youtube")], [], (now()-timedelta(days=1)).date().isoformat(), (now()+timedelta(days=366)).date().isoformat())
+        self.store.apply_snapshot([{"id": p, "username": "akun_satu", "name": "Akun", "type": p, "isConnected": True, "publishEligible": True} for p in ("tiktok", "facebook", "youtube")], [], (now()-timedelta(days=1)).date().isoformat(), (now()+timedelta(days=366)).date().isoformat())
         self.config = Config(Path(self.temp.name), copy.deepcopy(Config.load().data))
         self.config.runtime.mkdir(exist_ok=True)
         self.config.data["workflow"]["min_free_disk_gb"] = 0

@@ -51,6 +51,8 @@ def digest_file(path: Path, algorithm="sha256"):
 
 
 def safe_error(error):
+    if isinstance(error, BaseExceptionGroup):
+        error = '; '.join(dict.fromkeys(safe_error(leaf) for leaf in exception_leaves(error)))
     text = str(error) or type(error).__name__
     text = re.sub(r"\b\d{6,15}:[A-Za-z0-9_-]{25,}\b", "[telegram-token]", text)
     text = re.sub(r"\b(?:sk|pk)-[A-Za-z0-9_-]+", "[api-key]", text)
@@ -58,6 +60,12 @@ def safe_error(error):
     text = re.sub(r"(?i)(bearer|basic)\s+\S+", r"\1 [redacted]", text)
     text = re.sub(r"(?i)(api[_-]?key|secret|token|password)[\s:=]+\S+", r"\1=[redacted]", text)
     return text[:800]
+
+
+def exception_leaves(error):
+    if isinstance(error, BaseExceptionGroup):
+        return [leaf for child in error.exceptions for leaf in exception_leaves(child)]
+    return [error]
 
 
 @contextmanager

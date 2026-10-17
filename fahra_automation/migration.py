@@ -88,6 +88,7 @@ def import_snapshots(store, folder):
             raise ConfigurationError('Target berubah saat snapshot dibaca; pekerjaan atau aset sudah tersedia.')
         # Doctor may have populated this pool; only the complete legacy import may replace it.
         connection.execute('DELETE FROM external_schedules')
+        connection.execute('DELETE FROM account_capabilities')
         connection.execute('DELETE FROM accounts')
         store.put_setting(connection,'repliz_synced_at',None)
         store.put_setting(connection,'sync_in_progress',True)

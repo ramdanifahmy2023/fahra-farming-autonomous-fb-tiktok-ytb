@@ -19,12 +19,23 @@ class AttemptBlocked(ConfigurationError):
 
 
 class AttemptJournal:
-    def __init__(self, config):
+    def __init__(self, config, *, readonly=False):
         production_runtime = (config.root.resolve() == CODE_ROOT and (config.root / '.git').is_dir()
                               and config.runtime.resolve() == CODE_ROOT / 'runtime')
         self.root = (config.path(config.section('workflow').get('journal_dir', 'runtime/attempts'))
                      if production_runtime else config.runtime / 'attempts')
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.barrier_root = self.root
+        if not readonly:
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    @contextmanager
+    def barrier(self, exclusive=False):
+        with (self.barrier_root / '.backup.lock').open('a+') as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream, fcntl.LOCK_UN)
 
     def folder(self, action_id):
         return self.root / hashlib.sha256(str(action_id).encode()).hexdigest()
@@ -33,7 +44,7 @@ class AttemptJournal:
     def locked(self, action_id):
         folder = self.folder(action_id)
         folder.mkdir(exist_ok=True, mode=0o700)
-        with (folder / '.lock').open('a+') as stream:
+        with self.barrier(), (folder / '.lock').open('a+') as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
             try:
                 yield folder
@@ -60,6 +71,11 @@ class AttemptJournal:
                 stream.flush()
                 os.fsync(stream.fileno())
             descriptor = os.open(folder, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            descriptor = os.open(self.root, os.O_RDONLY)
             try:
                 os.fsync(descriptor)
             finally:
@@ -92,6 +108,8 @@ class AttemptJournal:
 
     def all_states(self):
         result = []
+        if not self.root.exists():
+            return result
         for folder in self.root.iterdir():
             if folder.is_dir():
                 files = sorted(folder.glob('*.json'))

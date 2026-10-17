@@ -4,6 +4,8 @@ Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. 
 
 ## Urutan normal
 
+Mulai versi perbaikan audit 18 Oktober, gunakan Python 3.14. Perubahan config file baru berlaku setelah restart semua klien layanan terkait. Schema v1 dimigrasikan ke v2 pada pembukaan tulis; status/health/inspect memakai SQLite read-only dan tidak mengubah schema.
+
 1. `init`, lalu `doctor`. Doctor membaca bot/Repliz/AI/Drive/MCP tanpa membuat posting. `sync` memperbarui snapshot akun dan jadwal lengkap secara atomik.
 2. `preview URL --sync-drive` membuktikan download, AI, render, dan checksum Drive di runtime/previews. Preview tidak memanggil create schedule. Frame, transkrip, review caption, dan report.json menjadi bukti.
 3. Jalankan verifier full dan CI pada commit tugas. Media/AI/Drive membutuhkan preview selain fixture.
@@ -13,6 +15,20 @@ Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. 
 `service status|stop|restart`, `status`, `accounts`, `events --limit 50`, `reply status|pause|resume`, `backup`, `cleanup --status` tersedia. `cleanup` tanpa opsi hanya rencana; `cleanup --apply` memeriksa ulang bukti sebelum menghapus file yang memenuhi syarat.
 
 Untuk restart terencana, pause reply dahulu, buat backup, lalu stop/deploy/start layanan. Periksa snapshot akun sudah lengkap setelah startup sebelum `reply resume`. Worker juga menahan proses ketika snapshot sedang diperbarui atau generation berubah, tanpa menghabiskan failure budget draft. Jangan mengubah status unknown menjadi queued/drafted untuk melewati penantian.
+
+## Pemeriksaan dan pemulihan setelah audit
+
+- `health`: heartbeat tiap loop, usia heartbeat, kegagalan beruntun, sumber/kiriman baru versus legacy, hold, kesiapan akun, token AI yang dilaporkan provider, durasi tahap dan limiter. Unknown berarti belum ada bukti dari versi ini. Stale/error perlu diperiksa meskipun PID hidup. Tiga kegagalan berturut-turut membuat satu alert admin per rangkaian kegagalan.
+- `delivery inspect ID` dan `reply inspect ID`: status, hasil provider yang tersimpan, jurnal, serta tindakan yang tersedia. `reconcile` atau `resolve` mencocokkan bukti dengan GET; tidak memaksa sukses dan tidak membuat kiriman/balasan baru. Jadwal error diperiksa berkala pada ID yang sama. Hasil yang tetap ambigu tetap ditahan.
+- `delivery retry-local ID`: hanya kegagalan lokal tanpa remote schedule/intent dan tanpa asset bersama yang sedang dikerjakan. Checkpoint valid dipakai kembali. Sumber yang sudah dinyatakan gagal downloader ditahan untuk pemeriksaan sumber; tidak otomatis memulai download yang sama berulang.
+- Input grup tetap publik; detail masuk DM pengirim. Pengirim membuka bot/Mulai untuk mengaktifkan laporan DM yang tertahan. Binding message ID dari grup dibuang saat migrasi, pesan detail lama yang masih pending dikarantina dengan sent=-2. Tidak menghapus pesan grup yang sudah terlanjur terkirim pada versi sebelumnya.
+- Readiness publish memerlukan identitas, koneksi dan bukti capability eksplisit atau histori sukses cocok dalam tujuh hari. Respons tanpa capability tidak dianggap true. Penolakan 401/403 menahan publish akun itu sampai bukti baru tersedia; readiness reply dibuktikan sendiri melalui profile dan preflight komentar. Jangan mengatasi hold dengan mengubah eligible langsung.
+
+`backup` menghasilkan folder bundle dengan database konsisten, seluruh jurnal publikasi/reply/laporan, bukti ownership dan konfigurasi nonrahasia. Credential tidak ikut. Setiap file memiliki ukuran/hash dalam manifest. Jurnal reply legacy yang memang tidak pernah diimpor dicatat sebagai legacy_reply_gaps; jangan menganggapnya terverifikasi. Jurnal intent baru yang hilang membuat pemeriksaan backup gagal.
+
+`restore FOLDER_BACKUP FOLDER_BARU` menolak folder tujuan yang sudah ada serta checksum/bukti yang tidak cocok. Hasil restore selalu paused, reply/report nonaktif, snapshot stale, dan tanpa ownership aktif. File config.safe.json adalah catatan konfigurasi, bukan aktivasi. Setelah menyiapkan checkout/config shadow, cocokkan intent dengan provider dan lengkapi bukti legacy; restore_requires_reconciliation harus tetap true sampai audit rekonsiliasi operator selesai. Jangan memindahkan ownership lama untuk melewati pemeriksaan.
+
+Sampling metrik konten terpisah dari laporan akun TikTok harian. Default `metrics.enabled=false`; aktifkan setelah pengamatan operasi stabil minimal 48 jam dan kemampuan GET statistik terbukti. Collector dibatasi lima kandidat per lima menit, pada 24/72/168 jam sejak published terverifikasi, dengan jendela satu jam. Nilai hilang tetap null; jendela terlewat disimpan missed_window. Data tidak memicu repost atau perubahan persona. Kontrak GET dan tingkat aksesnya mengikuti [dokumentasi statistik konten Repliz](https://docs.repliz.com/api/content/get-statistic.html).
 
 ## Migrasi dan aktivasi
 

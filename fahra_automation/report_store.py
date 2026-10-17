@@ -25,6 +25,8 @@ def digest(value):
 class ReportStore:
     def __init__(self, store):
         self.store = store
+        if store.readonly:
+            return
         with store.connect() as c:
             c.executescript('''
                 CREATE TABLE IF NOT EXISTS account_report_runs (

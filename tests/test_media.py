@@ -163,6 +163,6 @@ class DownloaderTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DownloadUncertain):
             await self.downloader.download(self.job, self.store)
         self.downloader.call.return_value = {'status': 'failed', 'error': 'network'}
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ValueError):
             await self.downloader.download(self.job, self.store)
         self.store.checkpoint.assert_not_called()

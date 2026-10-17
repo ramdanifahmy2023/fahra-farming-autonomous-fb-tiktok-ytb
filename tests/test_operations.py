@@ -31,7 +31,7 @@ class OperationTests(unittest.TestCase):
 
     def delivery(self):
         accounts = [{'id':f'tt-{n}', 'type':'tiktok', 'username':f'user{n}',
-                     'name':f'User {n}', 'isConnected':True} for n in range(2)]
+                     'name':f'User {n}', 'isConnected':True, 'publishEligible':True} for n in range(2)]
         self.store.apply_snapshot(accounts, [], self.at.date().isoformat(),
                                   (self.at.date()+timedelta(days=2)).isoformat())
         self.store.enqueue(1,1,1,[('https://www.instagram.com/reel/restore/','restore')], required_destinations=['tiktok'])
@@ -134,7 +134,7 @@ class OperationTests(unittest.TestCase):
         self.store.checkpoint(job['id'],'scheduled',payload={'submission':body},schedule_id='remote-moved')
         remote_time=iso(self.at+timedelta(days=1,hours=3))
         remote={**body,'id':'remote-moved','status':'pending','scheduleAt':remote_time}
-        accounts=[{'id':f'tt-{n}','type':'tiktok','username':f'user{n}','isConnected':True} for n in range(2)]
+        accounts=[{'id':f'tt-{n}','type':'tiktok','username':f'user{n}','isConnected':True, 'publishEligible':True} for n in range(2)]
         self.store.apply_snapshot(accounts,[remote],self.at.date().isoformat(),(self.at.date()+timedelta(days=2)).isoformat())
         self.journal.reconcile_store(self.store)
         restored=self.store.job(job['id'])

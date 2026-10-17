@@ -36,7 +36,7 @@ def sync_store(store, rows):
 
 def accounts(facebook=3, youtube=2):
     return [{'id': f'{p}-{i}', 'name': f'{p} {i}', 'username': f'user-{i}', 'type': p,
-             'isConnected': True} for p, n in [('facebook', facebook), ('youtube', youtube)] for i in range(n)]
+             'isConnected': True, 'publishEligible': True} for p, n in [('facebook', facebook), ('youtube', youtube)] for i in range(n)]
 
 
 def config(root):
@@ -143,8 +143,8 @@ class StoreTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sync_store(self.store, [{**accounts()[0], 'isConnected': 'false'}])
         self.assertEqual(before, self.store.accounts())
-        sync_store(self.store, accounts() + [{'id': EXCLUDED_ACCOUNT_ID, 'type': 'tiktok', 'isConnected': True},
-                                             {'id': 'other-tiktok', 'type': 'tiktok', 'isConnected': True}])
+        sync_store(self.store, accounts() + [{'id': EXCLUDED_ACCOUNT_ID, 'type': 'tiktok', 'isConnected': True, 'publishEligible': True},
+                                             {'id': 'other-tiktok', 'type': 'tiktok', 'isConnected': True, 'publishEligible': True}])
         self.assertEqual(len(self.store.accounts()), 6)
         before = self.store.accounts()
         with self.assertRaises(ValueError):
@@ -389,7 +389,7 @@ class ReplizTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.accounts(), before)
 
     async def test_create_blocks_wrong_platform_before_any_post(self):
-        self.client.request.return_value = {'id': 'bad', 'type': 'tiktok', 'isConnected': True}
+        self.client.request.return_value = {'id': 'bad', 'type': 'tiktok', 'isConnected': True, 'publishEligible': True}
         with self.assertRaises(AccountUnavailable):
             await self.client.check_account('bad', 'facebook')
         self.assertEqual([c.args[0] for c in self.client.request.call_args_list], ['GET'])

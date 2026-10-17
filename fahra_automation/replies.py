@@ -74,7 +74,7 @@ class ReplyWorker:
         self.db = ReplyStore(store)
         self.personas = PersonaRegistry(store)
         self.journal = AttemptJournal(config)
-        self.ai = ai or ReplyAI(config)
+        self.ai = ai or ReplyAI(config, store)
         profile = json.loads((config.root / 'profiles/tiktok-comments-id.json').read_text())
         self.profiles = CommentProfiles(api, profile, config.runtime / 'replies/profiles', config=config)
         self.keywords = [w for words in profile['categories'].values() for w in words]
@@ -92,7 +92,7 @@ class ReplyWorker:
         all_accounts = await self.api.pages('/public/account', {'types': ['tiktok', 'facebook', 'youtube']})
         with self.store.tx() as c:
             self.db.require_snapshot(generation, connection=c)
-            approved = {r[0] for r in c.execute('SELECT id FROM accounts WHERE connected=1 AND eligible=1')}
+            approved = {r[0] for r in c.execute("SELECT id FROM accounts WHERE connected=1 AND username!=''")}
             own_ids = {str(a['generatedId']) for a in all_accounts if a.get('generatedId')}
             accounts = {object_id(a): a for a in all_accounts if allowed_account(a) and object_id(a) in approved and a.get('isConnected')}
             self.db.enroll_accounts(accounts, generation=generation, connection=c)
@@ -322,8 +322,8 @@ class ReplyWorker:
         finally:
             self.db.release(event['id'])
 
-    async def reconcile(self):
-        for event, attempt in self.db.unresolved():
+    async def reconcile(self, identity=None):
+        for event, attempt in self.db.unresolved(identity):
             try:
                 item = event['payload']
                 if item['account_id'] == EXCLUDED_ACCOUNT_ID or item['account_id'] not in self.store.get('reply_account_ids', []):
@@ -364,7 +364,9 @@ class ReplyWorker:
         while True:
             try:
                 await self.ingest()
+                self.store.health('reply_poll', 'ok')
             except Exception as exc:
+                self.store.health('reply_poll', 'error', reason=safe_error(exc))
                 self.store.set('reply_poll_error', safe_error(exc))
                 self.store.record('reply_poll_failed', error=safe_error(exc))
             await asyncio.sleep(self.config.section('reply')['poll_seconds'])
@@ -391,6 +393,7 @@ class ReplyWorker:
             except ConfigurationError:
                 raise
             except Exception as exc:
+                self.store.capability(job['account_id'], 'reply', 'held', 'profile_error', safe_error(exc))
                 failures = job['payload'].get('comment_profile_failures', 0) + 1
                 delay = min(86400, 300 * 2 ** min(failures - 1, 8))
                 if isinstance(exc, ReplizError) and exc.status == 429:
@@ -401,6 +404,7 @@ class ReplyWorker:
                 raise
             self.store.checkpoint(job['id'], payload={'comment_profile': {**result, 'checked_at': iso()},
                 'comment_profile_retry_at': None, 'comment_profile_failures': 0, 'comment_profile_error': None})
+            self.store.capability(job['account_id'], 'reply', 'ready', 'profile_verified')
             return result
 
     async def profile_once(self):
@@ -416,7 +420,7 @@ class ReplyWorker:
                 AND json_extract(payload,'$.post_id') IS NOT NULL
                 ORDER BY json_extract(payload,'$.comment_profile.checked_at') IS NOT NULL,
                     julianday(json_extract(payload,'$.comment_profile.checked_at')),created_at,id""").fetchall()
-        count = 0
+        count, failures = 0, []
         batch_limit = max(1, min(20, self.config.section('reply').get('profile_batch_size', 5)))
         for row in rows:
             job = self.store.job(row['id'])
@@ -432,20 +436,26 @@ class ReplyWorker:
             try:
                 await self.ensure_profile(job)
             except Exception as exc:
+                failures.append(safe_error(exc))
                 self.store.record('reply_profile_post_failed', job['id'], error=safe_error(exc))
                 if isinstance(exc, ReplizError) and exc.status == 429:
                     break
             if count >= batch_limit:
                 break
         self.store.set('reply_profile_at', iso())
+        self.store.set('reply_profile_error', '; '.join(failures) if failures else None)
+        self.store.health('reply_profiles', 'error' if failures else 'ok',
+                          reason='; '.join(failures), details={'checked': count, 'failed': len(failures)})
 
     async def profile_loop(self):
         while True:
             try:
                 await self.profile_once()
-                self.store.set('reply_profile_error', None)
+                if not self.store.get('reply_enabled', False):
+                    self.store.health('reply_profiles', 'waiting')
             except Exception as exc:
                 self.store.set('reply_profile_error', safe_error(exc))
+                self.store.health('reply_profiles', 'error', reason=safe_error(exc))
                 self.store.record('reply_profile_failed', error=safe_error(exc))
             await asyncio.sleep(self.config.section('reply').get('profile_seconds', 300))
 
@@ -457,7 +467,9 @@ class ReplyWorker:
                     await self.process_one()
                     await self.reconcile()
                     self.store.set('reply_worker_at', iso())
+                self.store.health('reply_worker', 'ok' if self.store.get('reply_enabled', False) else 'waiting')
             except Exception as exc:
+                self.store.health('reply_worker', 'error', reason=safe_error(exc))
                 self.store.record('reply_worker_failed', error=safe_error(exc))
             await asyncio.sleep(15)
 
@@ -497,7 +509,7 @@ def main():
     if args.action == 'preview':
         result = asyncio.run(preview(config, args.job, args.text, args.folder))
     else:
-        store = Store(config.runtime / 'workflow.sqlite3')
+        store = Store(config.runtime / 'workflow.sqlite3', readonly=args.action == 'status')
         db = ReplyStore(store)
         if args.action in {'activate', 'resume'}:
             config.require_live_action()
@@ -509,7 +521,7 @@ def main():
                     generation = db.require_snapshot()
                     accounts = await api.pages('/public/account', {'types': ['tiktok', 'facebook', 'youtube']})
                     db.require_snapshot(generation)
-                    eligible = {a['id'] for a in store.eligible_accounts()}
+                    eligible = {a['id'] for a in store.accounts() if a['connected'] and a['username']}
                     ids = [object_id(a) for a in accounts if allowed_account(a) and a.get('isConnected') and object_id(a) in eligible]
                     if not ids:
                         raise ValueError('Tidak ada akun target.')
