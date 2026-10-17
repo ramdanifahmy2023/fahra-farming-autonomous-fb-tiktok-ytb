@@ -16,3 +16,5 @@ Mulai dari [tools.md](tools.md) dan [operasi](docs/OPERATIONS.md). Keputusan tet
 Audit setelah aktivasi dan prioritas pekerjaan berikutnya: [temuan 16 Oktober 2026](docs/AUDIT_IMPROVEMENT_20261016.md) dan [rencana perbaikan](docs/IMPROVEMENT_PLAN.md). Permintaan terbaru fokus plan; perbaikan dalam dokumen tersebut belum diimplementasikan.
 
 Credential, runtime, media, dan konfigurasi mesin tidak masuk Git. Repo harus tetap private.
+
+Permintaan laporan TikTok >600 follower pukul 08.00 WIB: [audit Repliz nyata 18 Oktober](docs/AUDIT_TIKTOK_REPORT_20261018.md) dan [rencana laporan beserta format/pengujian](docs/TIKTOK_DAILY_REPORT_PLAN.md). Fitur laporan harian masih berupa rencana, belum aktif.
