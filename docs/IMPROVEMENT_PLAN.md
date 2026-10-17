@@ -1,89 +1,62 @@
 # Rencana perbaikan Fahra Automation
 
-Status 16 Oktober 2026: usulan setelah [audit kondisi aktif](AUDIT_IMPROVEMENT_20261016.md). Pengguna meminta fokus plan terlebih dahulu. Hasil tugas ini adalah dokumen audit dan urutan pengerjaan; perbaikan aplikasi belum dijalankan.
+Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Pengguna meminta audit dan plan dengan bahasa sederhana. Dokumen ini belum merupakan implementasi. A01–A11 merujuk [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md); temuan baru adalah penanganan error kelompok downloader dan pemetaan bank cleanup migrasi.
 
-Sasaran pertama: delivery baru hanya dikirim ketika akun dan snapshot masih sah pada saat transport, kegagalan dapat dipulihkan tanpa posting ganda, dan operator bisa melihat penyebab pekerjaan tertahan. Sasaran berikutnya: mengurangi komputasi yang sia-sia dan mengukur kualitas hasil. Penambahan volume mengikuti bukti kestabilan.
+Sasarannya: bot tahu kapan harus bekerja, kapan harus menunggu, dan bagaimana melanjutkan pekerjaan gagal tanpa mengirim video atau balasan dua kali. AI tidak mengerjakan sumber yang sudah pasti ditolak oleh profil aplikasi.
 
-## Batas yang tetap berlaku
+## 1. Perbaiki batas pengiriman dan pemeriksaan video
 
-Satu sumber baru tetap satu asset dan tiga tujuan wajib. Histori legacy tidak mendapat backfill. Batas 20 video/akun/hari WIB tetap menjadi batas lokal, dengan batas provider yang lebih rendah dihormati. TikTok iq7fanspage tetap dikecualikan. Input Telegram tetap publik dengan kendali admin dan rincian privat. Akun baru masuk otomatis sesudah bukti kesiapan lengkap, reconnect mempertahankan histori.
+Prioritas pertama mencakup A01, A03, A05 dan error downloader baru.
 
-Orientasi sumber, zoom 110%, audio asli, hook Barlow [0,3), dan kredit Instagram terverifikasi dipertahankan. Drive Desktop tetap satu jalur sinkronisasi. Tidak ada render ulang/posting ulang otomatis untuk mengganti gaya. Cleanup tetap paling cepat 24 jam setelah tujuan terakhir terbit dan seluruh referensi terlindungi.
+- Periksa ulang generation snapshot, akun, kuota, binding dan pilot persis sebelum request publikasi, sesudah antrean limiter. Jika belum dikirim, tutup intent sebagai not_sent secara konsisten. Jika transport mungkin sudah terjadi, tetap tahan sebagai unknown dan rekonsiliasi.
+- Buka penyebab ExceptionGroup secara rekursif. Pertahankan arti ConfigurationError sebagai penantian dan DownloadUncertain sebagai penahanan. Kelompok campuran/hasil ambigu memilih tindakan konservatif; rahasia dan URL tetap disamarkan.
+- Bedakan sumber tanpa video, akses terbatas, respons kosong, timeout dan gangguan sementara. Kegagalan bersama ditangani pada asset; tiga tujuan tidak menghabiskan masing-masing empat percobaan untuk manifest gagal yang sama. Jangan mengulang start yang belum pasti.
+- Validasi durasi, ukuran dan rasio segera sesudah probe, sebelum transkripsi/frame/AI. Satu alasan sumber ditampilkan konsisten di tiga tujuan. Default tetap menolak format di luar profil. Crop, padding, upscale atau pemotongan durasi memerlukan keputusan format terpisah.
+- Pisahkan chat asal dari laporan privat. Input publik tetap diterima; grup hanya mendapat tanda terima umum. Rincian/tautan hasil menuju pengirim/admin yang berhak. Jika DM belum tersedia, simpan laporan dan beri alur membuka bot tanpa membuka rincian di grup.
 
-Angka 20 bukan target yang harus dipaksa tercapai. Pedoman [TikTok Direct Post](https://developers.tiktok.com/docs/en/content-sharing-guidelines) menyebut batas per kreator dalam jendela 24 jam yang dapat bervariasi. Jalur dan limit efektif Repliz perlu diukur; batas Direct Post tidak langsung diasumsikan sama untuk semua akun Repliz.
+File utama: `pipeline.py`, `downloader.py`, `media.py`, `util.py`, `repliz.py`, `db.py`, `telegram.py` dan tes terkait.
 
-## Tahap 1 Ketepatan kirim dan akses informasi
+Lulus jika tiga race limiter menghasilkan nol POST tiruan; penantian metadata tidak menghabiskan retry; download belum pasti masuk hold tanpa start kedua; sumber tidak valid berhenti sebelum AI; dan callback sah di grup tidak membocorkan rincian. Uji juga error kelompok bertingkat/campuran, crash pada batas transport dan restart. Perubahan media memerlukan preview nyata terisolasi tanpa publikasi.
 
-Menutup A01, A02, A03. Perkiraan 2 sampai 4 hari pengembangan, bergantung kontrak readiness provider.
+## 2. Beri jalan pemulihan untuk kiriman dan balasan
 
-1. Tambahkan regresi dari tiga race limiter publikasi. Hubungkan pemeriksaan snapshot generation, akun, quota, binding dan pilot ke callback tepat sebelum transport. Jurnal/DB mencatat belum dikirim secara konsisten jika callback menolak. Crash setelah transport tetap unknown dan wajib rekonsiliasi.
-2. Buat readiness per akun/operasi: identitas terverifikasi, status koneksi, capability, waktu pemeriksaan, alasan hold, dan cooldown error. Gunakan bukti yang tersedia dari provider; unknown tidak berubah menjadi ready hanya karena field tidak ada. Akun yang sudah bekerja dapat memakai bukti historis yang cocok dan masih sah sebagai bagian migrasi readiness.
-3. Pisahkan asal pesan Telegram dari tujuan laporan. Grup hanya mendapat tanda terima umum; detail dan tautan hasil dikirim privat kepada pengirim yang telah membuka bot. Callback tetap memeriksa actor dan konteks. Layanan publik tidak diganti menjadi allowlist.
+Meliputi A02, A04 dan A09, sesudah kontrak pengiriman tahap pertama stabil.
 
-File utama: `pipeline.py`, `repliz.py`, `db.py`, `telegram.py`, tes scheduler/pipeline/Telegram dan migrasi readiness. Perubahan schema harus memiliki migration dan latihan upgrade fixture.
+- Sediakan inspect/reconcile/resolve untuk failed-with-remote dan reply sent_unverified. Tampilkan ID jadwal, hasil provider, jurnal, kuota, bukti post/reply dan tindakan yang diperbolehkan. Jangan menghapus ID atau mengulang tujuan yang sudah berhasil.
+- Jadwal error yang kemudian success pada ID sama harus dapat menjadi published dan memberi satu notifikasi. Pemeriksaan ulang diberi interval/batas beban. Retry provider hanya setelah kontrak, akses paket, identitas dan hasil sebelumnya terbukti; keberadaan endpoint bukan bukti retry aman.
+- Pisahkan kesiapan koneksi, identitas, posting dan komentar per akun. Field capability yang tidak ada tidak otomatis berarti siap. Gunakan bukti provider dan histori yang cocok serta masih berlaku. Akun bermasalah ditahan secara spesifik, bukan mematikan pool sehat.
+- Kelompokkan reply menurut umur, platform, hubungan ke posting terkelola dan alasan penahanan. Cocokkan ulang 20 hasil baru yang belum terbukti tanpa resend. Jangan memaksa komentar ambigu menjadi balasan otomatis. Buktikan kesempatan dan hasil yang memenuhi syarat sebelum menyimpulkan Facebook/YouTube sehat atau rusak.
+- Periksa kasus caption gagal parsing dan konsistensi checkpoint asset/delivery. Satu tujuan bisa tertinggal failed meski persiapan bersama kemudian berhasil melalui tujuan lain. Pemulihan mempertahankan checkpoint valid dan tidak mengulang hasil yang sudah terbit.
 
-Kriteria lulus:
+File utama: `pipeline.py`, `db.py`, `repliz.py`, `replies.py`, `reply_store.py`, `comment_profiles.py`, `journal.py` dan antarmuka operator. Perubahan antarmuka memakai UI UX Pro Max dan antislop saat implementasi.
 
-- Nol mock POST jika snapshot/akun/pilot menjadi tidak sah selama limiter, termasuk penundaan 429 dan antrean request lain.
-- Timeout setelah transport tetap menghasilkan satu intent yang ditahan; restart/restore tidak menggandakan POST.
-- Akun baru dengan identitas/capability parsial belum ikut rotasi; snapshot lengkap mengikutsertakannya otomatis. Disconnect/reconnect tidak mereset kuota/cutoff.
-- Anggota grup selain pengirim/admin tidak melihat rincian, termasuk setelah callback sah milik pengirim. DM gagal ditahan tanpa membocorkan detail ke grup.
-- Semua invariant lama dan verifier full tetap lulus. Bukti fixture tidak disebut sebagai publikasi nyata.
+Lulus jika error→success jadwal sama terpulihkan tanpa create baru; hasil ambigu tetap ditahan; partial success tiga platform dipertahankan; akun parsial belum masuk rotasi sampai lengkap; reconnect tidak mereset kuota; serta setiap reply memiliki status bukti yang jelas. Enam kegagalan provider nyata adalah kasus pemeriksaan, bukan instruksi langsung mengulang semuanya.
 
-## Tahap 2 Pemulihan kegagalan dan validasi media lebih awal
+## 3. Buat keadaan bot mudah dilihat dan dipulihkan
 
-Menutup A04 dan A05, serta bagian review A09. Mulai setelah kontrak pengiriman tahap 1 stabil. Perkiraan 3 sampai 5 hari.
+Meliputi A06–A08, dasar A11 dan cleanup migrasi baru.
 
-1. Tambahkan klasifikasi `preflight`, `media`, `permission`, `rate_limit`, `provider_transient`, dan `unknown`, dengan reason yang dapat ditindak. Status failed-with-remote tetap dipantau secara terbatas dan dapat pulih berdasarkan bukti remote yang cocok.
-2. Buat perintah inspect/reconcile/resolve untuk delivery dan reply. Setiap tindakan menampilkan schedule ID, post evidence, jurnal, quota dan keputusan yang akan diambil. Retry lokal hanya untuk belum terkirim; retry provider mempertahankan schedule ID dan membutuhkan kontrak endpoint yang sudah dibuktikan.
-3. Validasi media setelah download/probe sebelum AI. Satu asset yang tidak sesuai menyimpan satu alasan yang ditampilkan pada semua tujuan. Cek ruang disk lagi sebelum ekstraksi dan render.
-4. Kelompokkan review komentar berdasarkan alasan, umur, platform dan hasil terakhir. Jangan mengirim ulang 24 reply legacy yang masih sent_unverified atau memproses ulang 115 needs_review secara massal.
+- Buat health hanya-baca tiap loop: sukses terakhir, kegagalan beruntun, usia pekerjaan tertua, jumlah target unik, alasan menunggu dan tindakan berikutnya. Error per posting tidak hilang karena loop global selesai. Bedakan pemeriksaan ulang dari kiriman baru.
+- Ringkasan memakai istilah jelas: diterima, dikerjakan, menunggu jam tayang, ditolak format, gagal penyedia dan selesai. Pisahkan sumber dari jumlah kiriman, serta legacy dari pekerjaan baru. Alert admin dideduplikasi.
+- Paketkan backup database, batas jurnal konsisten, ownership dan konfigurasi nonrahasia dengan manifest/checksum. Credential tetap privat. Latihan restore memakai fixture, mulai shadow, dan menolak bukti yang hilang sebelum hak kirim diberikan.
+- Cocokkan 79 kasus cleanup legacy dengan bank asal dan manifest migrasi. Referensi lama hanya diterima bila kepemilikan, file Bank/Drive dan checksum terbukti. Jika kurang bukti tetap hold. Tidak ada penghapusan manual/rekursif.
+- Ukur waktu tiap tahap, antrean limiter, penggunaan AI yang tersedia dan disk. Tambahkan fairness pengirim serta pemeriksaan disk sebelum download/render. Uji beban sebelum menaikkan konkurensi.
+- Tambahkan migrasi schema eksplisit, konfigurasi tervalidasi, dan CLI status tanpa inisialisasi Store tulis. Jelaskan field yang perlu restart dan hilangkan reload sebagian yang berbeda dengan klien aktif.
 
-File utama: `db.py`, `pipeline.py`, `repliz.py`, `media.py`, `cli.py`, `reply_store.py`, `replies.py`. Tampilan kendali Telegram yang diperlukan mengikuti UI UX Pro Max dan antislop pada tahap implementasi.
+Lulus jika laporan menemukan loop macet walau PID hidup; restore fixture menghasilkan nol kiriman ganda dan menolak backup tidak lengkap; cleanup melindungi referensi lama/baru serta retensi; uji 20/100/1.000 sumber menjaga kuota/deduplikasi. Amati operasi sekurangnya 48 jam setelah penerapan dengan penyebut sumber/kiriman dan waktu snapshot jelas. Target latency/pemulihan mengikuti pengukuran, bukan janji tanpa baseline.
 
-Kriteria lulus:
+## 4. Ukur biaya dan hasil konten setelah alur stabil
 
-- Repliz error yang kemudian menjadi success pada ID sama dapat menjadi published dan menghasilkan satu notifikasi, tanpa create baru.
-- Retry ditahan bila remote/Content API/jurnal saling bertentangan atau hasil masih unknown.
-- Izin akun bermasalah menahan pemilihan baru secara spesifik; akun sehat dan platform lain tetap berjalan.
-- Fixture 480×854, durasi di luar profil, dan media rusak berhenti sebelum AI. Video valid tetap mengikuti alur normal; kebijakan penolakan tidak berubah diam-diam.
-- Preview media nyata terisolasi wajib bila jalur media berubah; tidak dipublikasikan. Kasus Facebook yang ada ditangani hanya setelah penyebab dan hasil remote cocok, tanpa menghapus histori.
+A10 adalah pengembangan lanjutan, bukan penyebab kegagalan saat ini. Simpan metrik yang tersedia pada umur posting yang sama, misalnya 24 jam, 72 jam dan 7 hari. Hubungkan ke platform, akun, sumber, topik, persona dan versi hook. Nilai tidak tersedia tetap kosong, bukan nol.
 
-## Tahap 3 Kesehatan operasi, pemulihan dan beban
+Bandingkan dengan jumlah sampel memadai; jangan posting ulang hanya untuk eksperimen. Rotasi akun, format editorial, avatar, audio dan target monetisasi tidak berubah otomatis. Tidak menjanjikan viral, follower atau pendapatan dari perbaikan teknis. Selesaikan pengujian versi Python minimum atau persempit dukungan berdasarkan bukti.
 
-Menutup A06, A07, A08, sisa A09 serta dasar A11. Perkiraan 3 sampai 5 hari pengembangan, dilanjutkan sekurangnya 48 jam pengamatan normal. Durasi ini perkiraan kerja, bukan janji tanggal selesai.
+## Aturan yang tetap utuh
 
-1. Sediakan health read-only per loop: sukses terakhir, failure streak, latency, backlog tertua, next retry, dan alasan degraded. Bedakan snapshot wait dari error provider. Pisahkan event perubahan status dari pemeriksaan ulang.
-2. Tambahkan alert admin yang dideduplikasi dan ringkasan harian. Tetapkan ambang awal dari baseline lalu evaluasi; interval kosong tanpa kiriman tidak dianggap kegagalan. Pengiriman alert baru menjadi bagian implementasi yang disetujui, bukan tindakan pada audit ini.
-3. Buat backup bundle dengan manifest/checksum dan jurnal yang konsisten. Simulasikan restore DB tertinggal, jurnal hilang/rusak, disk penuh, kehilangan volume, dan crash di batas intent/response. Restore tetap shadow sampai state cocok. Tentukan target RPO/RTO sesudah rehearsal, lalu tampilkan pencapaiannya.
-4. Uji antrean 20/100/1.000 sumber dengan fixture, kuota YouTube penuh, pergantian hari WIB, 429, timeout, serta akun putus. Ukur antrean limiter sebelum mengubah lock/concurrency. Pertahankan satu pemilik bot dan API budget bersama.
-5. Tambahkan fairness per pengirim dan budget kerja/AI yang terukur. Catat bytes sementara, token bila provider mengembalikannya, model aktual dan waktu tiap tahap. Jangan menebak biaya dari jumlah request saja.
-6. Amati komentar baru yang layak dan cocok dengan post terkelola; bedakan reply terverifikasi, like/moderasi terverifikasi, dan konfigurasi saja. Fitur nested tetap hold sampai kontrak parent terbukti.
+Satu link baru tetap satu asset dan tiga tujuan wajib; legacy tidak mendapat backfill. Batas lokal maksimal 20 video/akun/hari Asia/Jakarta dengan batas provider lebih rendah dihormati. Kuota reply terpisah. TikTok iq7fanspage tetap dikecualikan. Input Telegram publik, kontrol admin, dan rincian privat dipertahankan.
 
-Kriteria lulus:
+Orientasi asli, zoom 110%, audio asli, hook Barlow [0,3), serta `source: @username` terverifikasi tetap berlaku. Drive Desktop menjadi satu jalur sinkronisasi; semua checksum diperiksa sebelum publikasi. Tidak ada render/posting ulang untuk mengganti gaya. Cleanup minimal 24 jam setelah tujuan wajib terakhir published dan semua referensi terlindungi.
 
-- Health mengidentifikasi loop macet walau PID hidup; error per posting tidak hilang dari ringkasan karena loop global selesai.
-- Sebuah kasus menghasilkan satu alert awal dan pembaruan yang bermakna; snapshot wait normal tidak membanjiri notifikasi.
-- Restore latihan menghasilkan nol pengiriman ganda, menolak jurnal yang tidak lengkap, dan mempertahankan kuota serta ownership.
-- Target backlog/latency disepakati berdasarkan hasil uji, dengan seluruh sumber/delivery tertelusur dan platform yang penuh tidak mengulang hasil platform lain.
-- Laporan 48 jam memuat penyebut yang jelas: sumber diterima, delivery layak, jadwal diterima, published terverifikasi, failure dan hold. Tidak menetapkan target sukses 99% tanpa baseline.
-- Bukti komentar per platform diberi status terpisah; tidak menunggu komentar lalu mengklaim seluruh automasi lulus dari heartbeat.
+Implementasi memakai branch/worktree dan venv/runtime fixture sendiri. Jangan menyalin DB aktif atau menjalankan bot kedua. Jalankan verifier full `--base origin/main --secrets-from PATH_CREDENTIAL`, preview nyata bila media/AI/Drive berubah, CI pada SHA branch tepat, merge ff-only dari main bersih, pemeriksaan gabungan, push main dan CI/SHA remote. Restart hanya layanan yang kodenya berubah. Arsipkan bukti sebelum menghapus worktree tanpa force.
 
-## Tahap 4 Pengukuran kualitas dan hasil konten
-
-Menangani A10 dan penyelesaian A11 setelah tahap operasi stabil. Perkiraan 3 sampai 5 hari untuk instrumentasi awal, lalu 7 sampai 14 hari pengumpulan data bila volumenya memadai. Ini tahap lanjutan yang dapat dipilih terpisah.
-
-1. Simpan metrik publikasi pada umur yang sama, misalnya 24 jam, 72 jam dan 7 hari, bersama platform, akun, sumber, topik, persona dan versi hook/caption. Gunakan endpoint yang aksesnya telah dibuktikan; nilai tidak tersedia tetap null.
-2. Laporkan hasil per akun dan jenis konten dengan jumlah sampel. Bandingkan hook/caption melalui kiriman baru, tanpa menduplikasi satu video untuk eksperimen dan tanpa mengubah rotasi secara diam-diam.
-3. Catat dasar penggunaan sumber yang tersedia serta evaluasi nilai editorial jika monetisasi menjadi sasaran. Kredit sumber tetap wajib. Usulan penambahan konteks/narasi atau perubahan format memerlukan brief tersendiri karena ketentuan sekarang mempertahankan audio asli dan tanpa avatar.
-4. Pisahkan dokumen status terkini dari arsip, tambahkan migration schema eksplisit dan validasi konfigurasi. Tentukan versi Python yang benar-benar didukung serta hentikan reload parsial yang tidak konsisten dengan objek klien aktif.
-
-Kriteria lulus: data metrik dapat ditelusuri ke ID post dan waktu pengambilan, tidak mengklaim field yang tidak tersedia, serta dapat menjelaskan biaya dan hasil per sumber. Tidak menjanjikan viral, follower, atau monetisasi dari perubahan teknis.
-
-## Urutan keputusan dan pelaksanaan
-
-Prioritas yang disarankan adalah tahap 1, tahap 2, lalu tahap 3. Tahap 4 menyusul setelah data operasi cukup. Untuk media kecil, default rencana mempertahankan minimum 540×960 dan memberikan alasan penolakan lebih awal. Dukungan upscale/padding menjadi pilihan terpisah dengan preview; menaikkan piksel tidak menjanjikan detail baru.
-
-Setiap tahap implementasi memakai branch/worktree baru, venv/runtime fixture sendiri, dan credential hanya dari root yang ditetapkan. Tidak menyalin DB aktif ke worktree. Jalankan verifier full dengan `--base origin/main --secrets-from PATH_CREDENTIAL`, preview nyata jika media/AI/Drive berubah, CI pada SHA branch tepat, ff-only dari main bersih, pemeriksaan gabungan, push main, serta CI/SHA remote. Restart hanya layanan yang kodenya berubah. Arsipkan bukti sebelum membersihkan worktree tanpa force.
-
-Rencana dinyatakan selesai ketika dokumen dan buktinya diperiksa. Perbaikan aplikasi baru dinyatakan selesai setelah kriteria tahap terkait terbukti; kelulusan dokumen ini tidak mengklaim celah A01 sampai A11 sudah ditutup.
+Rencana selesai sebagai dokumen ketika bukti dan pemeriksaannya diarsipkan. Perbaikan baru selesai setelah kriteria terkait lulus dan diterapkan. Tes offline, preview, jadwal diterima, hasil publik dan aksi komentar nyata tetap dibedakan.
