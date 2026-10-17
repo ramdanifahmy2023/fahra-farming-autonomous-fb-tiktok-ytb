@@ -17,4 +17,4 @@ Audit terbaru dengan penjelasan sederhana: [audit ulang 18 Oktober 2026](docs/AU
 
 Credential, runtime, media, dan konfigurasi mesin tidak masuk Git. Repo harus tetap private.
 
-Permintaan laporan TikTok >600 follower pukul 08.00 WIB: [audit Repliz nyata 18 Oktober](docs/AUDIT_TIKTOK_REPORT_20261018.md) dan [rencana laporan beserta format/pengujian](docs/TIKTOK_DAILY_REPORT_PLAN.md). Fitur laporan harian masih berupa rencana, belum aktif.
+Permintaan laporan TikTok >600 follower pukul 08.00 WIB: [audit Repliz nyata 18 Oktober](docs/AUDIT_TIKTOK_REPORT_20261018.md) dan [rencana laporan beserta format/pengujian](docs/TIKTOK_DAILY_REPORT_PLAN.md). Laporan sudah tersedia melalui worker yang sama: pengambilan 07.50, kirim 08.00 Asia/Jakarta, hanya private admin. [Operasi laporan](docs/OPERATIONS.md#laporan-tiktok-harian) mencakup preview, status, enable/disable, dan pilot. Default config tetap disabled; produksi telah diaktifkan dan pilot message_id 416 diterima Telegram pada 18 Oktober. Run otomatis 08.00 belum dibuktikan oleh pilot.

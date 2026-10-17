@@ -2,6 +2,7 @@ import asyncio
 import copy
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
@@ -425,6 +426,29 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
             recover.assert_called_once()
             replies.db.recover.assert_called_once()
         self.assertTrue(self.store.get('startup_health')['ready'])
+
+    async def test_slow_startup_journal_does_not_block_event_loop(self):
+        from fahra_automation.cli import wait_for_startup
+        api, replies = Mock(), Mock()
+        api.sync = AsyncMock()
+        entered, release = threading.Event(), threading.Event()
+        def reconcile(store):
+            entered.set()
+            if not release.wait(2):
+                raise TimeoutError('event loop blocked')
+        with patch('fahra_automation.cli.AttemptJournal') as journal:
+            journal.return_value.reconcile_store.side_effect = reconcile
+            task = asyncio.create_task(wait_for_startup(self.config, self.store, api, replies))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                self.assertFalse(task.done())
+                self.assertEqual(self.store.get('startup_health')['phase'], 'reconciling_journal')
+                release.set()
+                await asyncio.wait_for(task, 2)
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
     async def test_startup_failure_does_not_enable_operational_workers(self):
         from fahra_automation.cli import wait_for_startup
