@@ -9,6 +9,7 @@ window_end = 23
 schedule_lead_seconds = 60
 max_attempts = 4
 sync_interval_seconds = 300
+sync_timeout_seconds = 120
 max_batch_links = 100
 max_pending_assets = 1000
 render_horizon_hours = 24

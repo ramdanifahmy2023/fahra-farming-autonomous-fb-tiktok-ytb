@@ -11,7 +11,7 @@ from fahra_automation.comment_profiles import CommentProfiles
 from fahra_automation.config import ConfigurationError
 from fahra_automation.replies import ReplyWorker
 from fahra_automation.reply_store import ReplyWait
-from fahra_automation.repliz import Repliz
+from fahra_automation.repliz import Repliz, SharedRateLimiter
 from fahra_automation.util import iso, now
 
 
@@ -302,9 +302,9 @@ class ReplySnapshotWaitTest(unittest.IsolatedAsyncioTestCase):
             c.execute('UPDATE comment_events SET attempts=44 WHERE id=?', (before['id'],))
         before = self.events()[0]
         worker_store = self.store
-        class InvalidatingLimiter:
+        class InvalidatingLimiter(SharedRateLimiter):
             def __init__(self):
-                self.lock = asyncio.Lock()
+                super().__init__(interval=0)
                 self.waited = False
             async def wait(self):
                 self.waited = True

@@ -14,15 +14,14 @@ from .util import extract_urls, iso, now, safe_error
 from . import telegram_views as views
 
 HELP = (
-    "<b>Reel masuk, progres terlihat</b>\n\n"
-    "Kirim link Reel Instagram di chat ini. Untuk batch, letakkan satu link per baris.\n\n"
-    "Bot mengunduh, membuat caption dan hashtag, mengedit video sekali, lalu menyimpan ke Drive. "
-    "Setiap Reel dikirim ke satu akun TikTok, satu Facebook Page, dan satu channel YouTube secara bergiliran, "
-    "maksimal 20 video per akun per hari.\n\n"
-    "Progres tiga tujuan tampil terpisah dalam satu pesan. Link posting dikirim setelah terbit. "
-    "Jika slot salah satu platform habis, kirimannya menunggu hari berikutnya."
+    "<b>Kirim Reel di sini</b>\n\n"
+    "Tempel link Reel Instagram. Kalau banyak, tulis satu link per baris.\n\n"
+    "Satu Reel menjadi tiga kiriman:\nTikTok · Facebook Page · YouTube Shorts\n\n"
+    "Bot menyiapkan video dan caption, menyimpan ke Drive, lalu menjadwalkan kiriman. "
+    "Progres diperbarui dalam satu pesan. Link hasil muncul setelah video benar-benar terbit.\n\n"
+    "Maksimal 20 video per akun per hari. Jika slot penuh, kiriman menunggu hari berikutnya."
 )
-ADMIN_HELP = ("\n\n<b>Pantau pekerjaan</b>\n/status · kuota dan pekerjaan\n/antrean · 20 pekerjaan terdekat\n"
+ADMIN_HELP = ("\n\n<b>Pantau pekerjaan</b>\n/status · kuota dan pekerjaan\n/antrean · daftar kiriman\n"
               "/akun · akun tujuan\n/video ID · detail video\n\n<b>Kelola antrean</b>\n/jeda · jeda pekerjaan baru\n"
               "/lanjut · lanjutkan\n/ulang ID · coba lagi video gagal\n/batal ID · batalkan sebelum dikirim\n\n"
               "Gunakan minimal enam karakter ID video.")
@@ -94,7 +93,8 @@ class Telegram:
                 self.store.notify(prefix, chat_id, "Bot ini memerlukan pairing. Jalankan perintah pair-code dari proyek lalu kirim /pair KODE melalui chat pribadi.")
             return
         if command in {"/start", "/help", "/bantuan"}:
-            self.store.notify(prefix, report_chat, HELP + (ADMIN_HELP if admin else ""), views.html_options())
+            self.store.notify(prefix, report_chat, HELP + (ADMIN_HELP if admin and command != '/start' else ""),
+                              views.html_options(views.menu('help') if admin else []))
             return
         if not admin and command.startswith("/"):
             self.store.notify(prefix, report_chat, "Bot menerima kiriman link Reel Instagram. Hasil batch dikirim lewat chat pribadi. Perintah kendali hanya untuk admin.")
@@ -103,14 +103,9 @@ class Telegram:
         if command == "/status":
             answer, options = views.status(self.store.summary())
         elif command == "/antrean":
-            rows = self.store.queue()
-            answer = "<b>Antrean kiriman</b>\n\n" + ("\n\n".join(f"<code>{j['id'][:8]}</code> · {views.platform_name(j)} · {views.e(views.label(j))}\n{views.e(j['username'] or 'menunggu alokasi', 40)} · {views.day(j['slot_date'])}" for j in rows) or "Belum ada video dalam antrean. Kirim link Reel untuk memulai.")
-            options = views.html_options()
+            answer, options = self.panel('queue')
         elif command == "/akun":
-            accounts = self.store.accounts()
-            answer = "\n".join(f"{i+1}. {views.platform_name(a)} · {(a['name'] or a['username'])[:50]} ({'aktif' if a['connected'] else 'terputus'})" for i, a in enumerate(accounts[:35])) or "Akun belum tersinkron."
-            if len(accounts) > 35:
-                answer += f"\n+{len(accounts)-35} akun lainnya. Daftar lengkap tersedia lewat CLI accounts."
+            answer, options = self.panel('accounts')
         elif command in {"/jeda", "/lanjut"}:
             self.store.set("paused", command == "/jeda")
             self.store.record("operator_pause_changed", user_id=user_id, paused=command == "/jeda")
@@ -123,7 +118,10 @@ class Telegram:
                 job["username"] = self.store.account_username(job["account_id"])
                 answer, options = views.video(job, admin=True)
             elif command == "/ulang":
-                answer = "Pekerjaan masuk antrean ulang." if self.store.retry(job["id"]) else "Pekerjaan tidak dapat diulang otomatis. Jadwal Repliz yang sudah dibuat perlu dicocokkan terlebih dahulu."
+                from .journal import AttemptJournal
+                entry = AttemptJournal(self.config, readonly=True).state(job['id'])
+                safe = not entry or entry['state'] in {'not_sent', 'rejected'}
+                answer = "Pekerjaan masuk antrean ulang." if safe and self.store.retry(job["id"]) else "Pekerjaan belum aman untuk diulang. Admin perlu memeriksa sumber dan mencocokkan hasil kirim lebih dulu."
             else:
                 answer = "Pekerjaan dibatalkan dan slot dilepas." if self.store.cancel(job["id"]) else "Pekerjaan sedang diproses atau sudah dikirim; tidak dapat dibatalkan dari antrean lokal."
         else:
@@ -164,13 +162,58 @@ class Telegram:
 
     async def answer_callback(self, **data):
         try:
-            return await asyncio.wait_for(self.call('answerCallbackQuery', **data), timeout=4)
+            return await asyncio.wait_for(self.call('answerCallbackQuery', **data), timeout=2)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.store.record('telegram_callback_ack_failed', error=safe_error(exc))
 
+    def panel(self, kind, page=0):
+        if kind == 'status':
+            return views.status(self.store.summary())
+        if kind == 'queue':
+            total = self.store.queue_count()
+            page = min(page, max(0, (total - 1) // 6))
+            return views.queue(self.store.queue(limit=6, offset=page * 6), total, page)
+        if kind == 'accounts':
+            return views.accounts(self.store.accounts(), page, fresh=self.store.snapshot_fresh())
+        return HELP + ADMIN_HELP, views.html_options(views.menu('help'))
+
+    async def panel_callback(self, query, match, video=False):
+        user = query.get('from', {}).get('id')
+        message = query.get('message', {})
+        chat = message.get('chat', {}).get('id')
+        if not isinstance(chat, int) or chat <= 0 or chat != user or not self.authorized(user):
+            await self.answer_callback(callback_query_id=query['id'], text='Menu ini hanya untuk admin di chat pribadi.', show_alert=True)
+            return
+        if video:
+            job = self.store.job(match[1])
+            if not job:
+                await self.answer_callback(callback_query_id=query['id'], text='Kiriman tidak ditemukan.')
+                return
+            job['username'] = self.store.account_username(job['account_id'])
+            text, options = views.video(job, admin=True, technical=match[2] == '1')
+            options['reply_markup']['inline_keyboard'] += views.menu()
+        else:
+            text, options = self.panel(match[1], int(match[2]))
+        await self.answer_callback(callback_query_id=query['id'])
+        try:
+            await asyncio.wait_for(self.send_ui('editMessageText', chat, message_id=message['message_id'], text=text, **options), timeout=8)
+        except asyncio.CancelledError:
+            raise
+        except TelegramError as exc:
+            if exc.code != 400 or 'message is not modified' not in str(exc).lower():
+                self.store.record('telegram_panel_failed', error=safe_error(exc))
+        except Exception as exc:
+            self.store.record('telegram_panel_failed', error=safe_error(exc))
+
     async def callback(self, query):
+        data = query.get('data', '')
+        panel = re.fullmatch(r'panel:(status|queue|accounts|help):(\d{1,5})', data)
+        detail = re.fullmatch(r'video:([0-9a-f]{32}):([01])', data)
+        if panel or detail:
+            await self.panel_callback(query, panel or detail, video=bool(detail))
+            return
         message = query.get("message", {})
         match = re.fullmatch(r"batch:([0-9a-f]{32}):(\d{1,3})", query.get("data", ""))
         snapshot = self.store.progress_snapshot(match[1]) if match else None
@@ -188,8 +231,8 @@ class Telegram:
         if page > (len(jobs) + 3) // 4:
             await self.answer_callback( callback_query_id=query["id"], text="Halaman tidak tersedia.")
             return
-        await self.answer_callback( callback_query_id=query["id"])
         self.store.progress_page(batch['id'], page)
+        await self.answer_callback( callback_query_id=query["id"])
 
     async def send_ui(self, method, chat_id, *, before_send=None, **data):
         delay = max(self.cooldown, self.chat_sent_at.get(chat_id, 0) + 1.1) - time.monotonic()

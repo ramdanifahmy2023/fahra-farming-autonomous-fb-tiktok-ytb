@@ -59,6 +59,8 @@ CLI `report preview|status|enable|disable|pilot` tersedia; [prosedur laporan](do
 
 ## Paket dan operasi
 
+Perbaikan log/tampilan 18 Oktober: `/antrean` dan `/akun` memakai halaman di Telegram; tombol baca tetap privat admin, detail error terpisah. Preview UI lokal tersedia melalui `scripts/preview_telegram.py`. Limiter memakai dua request bersamaan dengan mutasi serial; interval request/cooldown dan guard tetap berlaku. Snapshot dibatasi 120 detik, penantian reply menjadi health waiting. Bukti perubahan, preview GET/UI, Git/CI, pemasangan dan cleanup disimpan di runtime/verification/sync-bot-ui-20261018/.
+
 Paket Python `fahra_automation`, Python minimum 3.14, SQLite schema v2. Dependency dikunci pada requirements.lock. LaunchAgent `id.fahra.automation.social`; database runtime/workflow.sqlite3. Petunjuk perintah, cutover, dan pemulihan ada di [OPERATIONS.md](docs/OPERATIONS.md).
 
 Perbaikan audit 18 Oktober menambah `health`, `delivery inspect|reconcile|resolve|retry-local ID`, `reply inspect|reconcile|resolve ID`, dan `restore FOLDER_BACKUP FOLDER_BARU`. Status/inspect/health tidak menginisialisasi database tulis. Reconcile/resolve hanya GET provider dan pencocokan lokal; tidak POST ulang. Backup berupa bundle beserta jurnal publikasi/reply/laporan dan checksum; restore selalu shadow, paused, reply/report nonaktif, tanpa ownership aktif. Collector content metrics opsional berbeda dari laporan TikTok 08.00; `metrics.enabled=false` sampai operasi stabil. Perubahan file config memerlukan restart.

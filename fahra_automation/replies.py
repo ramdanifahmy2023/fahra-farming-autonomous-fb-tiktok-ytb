@@ -365,6 +365,9 @@ class ReplyWorker:
             try:
                 await self.ingest()
                 self.store.health('reply_poll', 'ok')
+            except ReplyWait as exc:
+                self.store.set('reply_poll_error', None)
+                self.store.health('reply_poll', 'waiting', reason=str(exc))
             except Exception as exc:
                 self.store.health('reply_poll', 'error', reason=safe_error(exc))
                 self.store.set('reply_poll_error', safe_error(exc))
@@ -435,6 +438,8 @@ class ReplyWorker:
             count += 1
             try:
                 await self.ensure_profile(job)
+            except ReplyWait:
+                raise
             except Exception as exc:
                 failures.append(safe_error(exc))
                 self.store.record('reply_profile_post_failed', job['id'], error=safe_error(exc))
@@ -453,6 +458,9 @@ class ReplyWorker:
                 await self.profile_once()
                 if not self.store.get('reply_enabled', False):
                     self.store.health('reply_profiles', 'waiting')
+            except ReplyWait as exc:
+                self.store.set('reply_profile_error', None)
+                self.store.health('reply_profiles', 'waiting', reason=str(exc))
             except Exception as exc:
                 self.store.set('reply_profile_error', safe_error(exc))
                 self.store.health('reply_profiles', 'error', reason=safe_error(exc))
@@ -468,6 +476,8 @@ class ReplyWorker:
                     await self.reconcile()
                     self.store.set('reply_worker_at', iso())
                 self.store.health('reply_worker', 'ok' if self.store.get('reply_enabled', False) else 'waiting')
+            except ReplyWait as exc:
+                self.store.health('reply_worker', 'waiting', reason=str(exc))
             except Exception as exc:
                 self.store.health('reply_worker', 'error', reason=safe_error(exc))
                 self.store.record('reply_worker_failed', error=safe_error(exc))

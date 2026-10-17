@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 import re
 import time
 import weakref
@@ -76,6 +77,8 @@ class SharedRateLimiter:
     def __init__(self, interval=.65):
         self.interval = interval
         self.lock = asyncio.Lock()
+        self.slots = asyncio.Semaphore(2)
+        self.mutations = asyncio.Lock()
         self.next_at = 0.0
 
     @classmethod
@@ -86,7 +89,8 @@ class SharedRateLimiter:
         return pools[key]
 
     async def wait(self):
-        await asyncio.sleep(max(0, self.next_at - time.monotonic()))
+        while self.next_at > time.monotonic():
+            await asyncio.sleep(self.next_at - time.monotonic())
         self.next_at = time.monotonic() + self.interval
 
     def defer(self, seconds):
@@ -113,8 +117,12 @@ class Repliz:
             cfg = self.config.section('repliz')
             self.limiter = SharedRateLimiter.shared(cfg['base_url'], cfg.get('min_request_interval_seconds', .65))
         waiting = time.monotonic()
-        async with self.limiter.lock:
-            await self.limiter.wait()
+        async with AsyncExitStack() as gates:
+            if mutation:
+                await gates.enter_async_context(self.limiter.mutations)
+            await gates.enter_async_context(self.limiter.slots)
+            async with self.limiter.lock:
+                await self.limiter.wait()
             if self.observer is not None:
                 self.observer.timing('repliz.limiter', (time.monotonic()-waiting)*1000)
             if mutation:
@@ -214,6 +222,10 @@ class Repliz:
 
     async def sync(self, store):
         generation = store.begin_sync()
+        async with asyncio.timeout(self.config.section('workflow').get('sync_timeout_seconds', 120)):
+            return await self.collect_snapshot(store, generation)
+
+    async def collect_snapshot(self, store, generation):
         all_accounts = await self.pages('/public/account')
         if any(not isinstance(a.get('type'), str) or not a['type']
                or type(a.get('isConnected')) is not bool for a in all_accounts):

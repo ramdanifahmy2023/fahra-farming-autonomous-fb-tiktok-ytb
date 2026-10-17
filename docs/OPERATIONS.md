@@ -14,6 +14,14 @@ Mulai versi perbaikan audit 18 Oktober, gunakan Python 3.14. Perubahan config fi
 
 `service status|stop|restart`, `status`, `accounts`, `events --limit 50`, `reply status|pause|resume`, `backup`, `cleanup --status` tersedia. `cleanup` tanpa opsi hanya rencana; `cleanup --apply` memeriksa ulang bukti sebelum menghapus file yang memenuhi syarat.
 
+Menu Telegram `/status`, `/antrean`, `/akun` dan `/bantuan` memiliki tombol baca di chat pribadi admin. Antrean memuat enam kiriman per halaman, akun delapan per halaman; semua halaman tersedia di bot. Tombol rincian menampilkan alasan manusiawi dahulu; **Detail teknis** menampilkan pesan mentah yang sudah disanitasi. Tombol tidak menjalankan retry, pause atau publikasi. `/ulang ID` juga memeriksa jurnal durable; hasil intended/unknown/accepted tetap ditahan meskipun DB lokal tertinggal.
+
+Status membedakan Reel baru, histori lama, jumlah kiriman, dan slot terpakai. Slot mencakup reservasi, bukan jumlah video terbit. Terjadwal berarti jadwal diterima; tautan hasil hanya tampil setelah publikasi terverifikasi. Selama pembaruan data akun, status menunjukkan waktu data lengkap terakhir. Penantian snapshot pada reply mempunyai health `waiting`, tidak menambah alarm kegagalan. Kesalahan provider tetap dicatat sebagai kegagalan asli.
+
+Pembaruan snapshot mempunyai batas total `workflow.sync_timeout_seconds=120` (rentang 30 sampai 600). Kegagalan dicoba kembali setelah paling lama 30 detik; snapshot parsial tetap menahan kiriman. Limiter Repliz menjaga interval mulai request, cooldown 429, paling banyak dua request bersamaan, dan satu mutasi pada satu waktu. Pemeriksaan hak kirim tetap sesudah antrean limiter. Monitor mengambil paling banyak sepuluh kiriman per putaran. Status remote error tidak dikembalikan ke scheduled hanya karena jurnal mencatat request pernah diterima; pemulihan mengikuti ID yang sama dan bukti provider.
+
+Preview tata baca tanpa jaringan: `.venv/bin/python scripts/preview_telegram.py`. HTML dan pesan fixture ditulis ke runtime/verification/bot-ui-preview/. Ini simulasi isi/tombol dari renderer bot; warna, font, sentuhan dan pembaca layar native tetap dikelola Telegram. Preview tidak mengirim pesan.
+
 Untuk restart terencana, pause reply dahulu, buat backup, lalu stop/deploy/start layanan. Periksa snapshot akun sudah lengkap setelah startup sebelum `reply resume`. Worker juga menahan proses ketika snapshot sedang diperbarui atau generation berubah, tanpa menghabiskan failure budget draft. Jangan mengubah status unknown menjadi queued/drafted untuk melewati penantian.
 
 ## Pemeriksaan dan pemulihan setelah audit

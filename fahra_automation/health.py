@@ -21,11 +21,19 @@ def record(store, component, state, *, reason='', duration_ms=None, details=None
                   (component, iso(), success, state, failures, reason, duration_ms,
                    json.dumps(details or {}, ensure_ascii=False)))
         if failures == 3:
+            from .telegram_views import human_error
+            names = {'account_sync': 'Pembaruan data akun', 'reply_poll': 'Pemeriksaan komentar',
+                     'reply_profiles': 'Pengaturan balasan', 'reply_worker': 'Balasan komentar',
+                     'media_worker': 'Persiapan video', 'publication_monitor': 'Pemeriksaan hasil kirim',
+                     'telegram_poll': 'Penerimaan pesan', 'telegram_outbox': 'Pembaruan pesan',
+                     'backup': 'Pencadangan data', 'cleanup': 'Pembersihan file kerja'}
             store.event(c, 'health_alert', component=component, reason=reason)
             c.execute("""INSERT OR IGNORE INTO outbox(dedupe_key,chat_id,text,created_at,options)
                 VALUES(?,265732518,?,?,'{}')""",
                 ('health:' + component + ':' + (success or 'initial'),
-                 f'Bot perlu diperiksa: {component}. Tiga pemeriksaan gagal. {reason}', iso()))
+                 f"{names.get(component, 'Layanan bot')} perlu diperiksa\n\n"
+                 f"Tiga pemeriksaan berturut-turut belum berhasil.\n{human_error(reason)}\n\n"
+                 'Buka /status untuk melihat antrean. Detail teknis tersimpan di log admin.', iso()))
 
 
 def report(store):

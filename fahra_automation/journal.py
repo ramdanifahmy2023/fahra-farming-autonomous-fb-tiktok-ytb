@@ -103,6 +103,9 @@ class AttemptJournal:
                 raise AttemptBlocked('Intent durable belum tersedia.')
             if existing['state'] == 'accepted' and (state != 'accepted' or str(schedule_id) != str(existing.get('schedule_id'))):
                 raise AttemptBlocked('Hasil diterima tidak boleh diturunkan menjadi aman retry.')
+            if (existing['state'] == state and existing.get('schedule_id') == schedule_id
+                    and existing.get('error') == (safe_error(error) if error else None)):
+                return existing
             return self.write(folder, {**existing, 'state': state, 'at': iso(),
                                       'schedule_id': schedule_id, 'error': safe_error(error) if error else None})
 
@@ -130,6 +133,9 @@ class AttemptJournal:
             if not job:
                 unresolved.append(action_id)
                 continue
+            if job.get('schedule_id') and item.get('schedule_id') and str(job['schedule_id']) != str(item['schedule_id']):
+                unresolved.append(action_id)
+                continue
             if job.get('status') == 'published':
                 if item.get('schedule_id') and str(job.get('schedule_id')) != str(item['schedule_id']):
                     unresolved.append(action_id)
@@ -145,6 +151,7 @@ class AttemptJournal:
             except (ValueError, TypeError, KeyError):
                 unresolved.append(action_id)
                 continue
+            remote = None
             with store.tx() as connection:
                 registered = connection.execute('SELECT platform FROM accounts WHERE id=?',(account,)).fetchone()
                 if not registered or registered['platform'] != job['platform']:
@@ -162,7 +169,14 @@ class AttemptJournal:
                     (account,when.astimezone(ZONE).date().isoformat(),iso(when),action_id))
             payload = {'submission': body, 'journal_restored': True, 'submitted_at': item['at']}
             if item['state'] == 'accepted' and item.get('schedule_id'):
-                store.checkpoint(action_id, 'scheduled', payload=payload, schedule_id=item['schedule_id'], counts_quota=1, leased=0)
+                failed = remote['status'] == 'error' if remote else job['status'] == 'failed'
+                payload['next_poll'] = ''
+                if failed:
+                    payload['failure_kind'] = 'provider'
+                store.checkpoint(action_id, 'failed' if failed else 'scheduled', payload=payload,
+                                 schedule_id=item['schedule_id'], counts_quota=1, leased=0,
+                                 last_error=(job.get('last_error') or 'Provider melaporkan kiriman gagal.')
+                                 if failed else None)
             elif job.get('status') == 'scheduled' and job.get('schedule_id'):
                 store.checkpoint(action_id, payload=payload, counts_quota=1, leased=0)
             else:
