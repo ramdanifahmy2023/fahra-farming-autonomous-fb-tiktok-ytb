@@ -90,7 +90,7 @@ class Pipeline:
             if account.get('publishEligible') is False:
                 self.store.capability(job['account_id'], 'publish', 'held', 'provider_denied', 'Provider menahan posting.')
                 raise ConfigurationError('Akun menunggu bukti kemampuan posting baru.')
-            if account.get('username') != self.store.account_username(job['account_id']):
+            if str(account.get('username') or '').strip() != self.store.account_username(job['account_id'], identity=True):
                 self.store.begin_sync()
                 raise ConfigurationError('Identitas akun berubah; menunggu snapshot lengkap berikutnya.')
         self.revalidate(job, generation)

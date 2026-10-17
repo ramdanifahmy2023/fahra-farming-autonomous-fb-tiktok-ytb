@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import test_operations as operations
 import test_replies as replies
+import test_foundation as foundation
 from test_repliz import FixtureConfig
 
 from fahra_automation.repliz import Repliz, SharedRateLimiter, MutationNotSent
@@ -111,6 +112,34 @@ class RequestFlowTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TimeoutError):
                 await api.sync(store)
             store.apply_snapshot.assert_not_called()
+
+
+class AccountIdentityTest(unittest.IsolatedAsyncioTestCase):
+    setUp = foundation.PipelineTest.setUp
+    ready = foundation.PipelineTest.ready
+
+    async def test_page_and_channel_names_do_not_invalidate_matching_username(self):
+        self.ready()
+        async def account(aid, platform):
+            return {'username':self.store.account_username(aid,identity=True) + ' ',
+                    'name':'Different display name', 'type':platform}
+        self.repliz.check_account.side_effect = account
+        generation = self.store.snapshot_generation()
+        for _ in range(2):
+            await self.pipeline.handle(self.store.claim())
+        self.assertEqual(self.repliz.create.await_count,2)
+        self.assertEqual(self.store.snapshot_generation(),generation)
+        self.assertTrue(self.store.snapshot_fresh())
+        self.assertEqual(self.store.job(self.fb['id'])['status'],'scheduled')
+        self.assertEqual(self.store.job(self.yt['id'])['status'],'scheduled')
+
+    async def test_real_username_change_still_blocks_before_post(self):
+        self.ready()
+        self.repliz.check_account.return_value = {'username':'renamed_account'}
+        await self.pipeline.handle(self.store.claim())
+        self.repliz.create.assert_not_awaited()
+        self.assertFalse(self.store.snapshot_fresh())
+        self.assertIn('Identitas akun berubah',self.store.job(self.fb['id'])['last_error'])
 
 
 class JournalResultTest(unittest.TestCase):

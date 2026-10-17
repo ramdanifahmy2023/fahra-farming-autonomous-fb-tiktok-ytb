@@ -16,7 +16,7 @@ class ReadableBotTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_read_only_navigation_reaches_every_account(self):
         account = self.store.accounts()[0]
-        items = [dict(account, id=str(i), username=f'account_{i:02d}') for i in range(64)]
+        items = [dict(account, id=str(i), username=f'account_{i:02d}',name=f'account_{i:02d}') for i in range(64)]
         seen = []
         for page in range(8):
             text, options = views.accounts(items, page)
@@ -142,6 +142,17 @@ class ReadableBotTest(unittest.IsolatedAsyncioTestCase):
         text, _ = views.accounts(self.store.accounts(),fresh=False)
         self.assertNotIn('Terhubung',text)
         self.assertIn('Menunggu data lengkap',text)
+
+    def test_page_name_is_readable_without_changing_identity(self):
+        with self.store.tx() as c:
+            c.execute("UPDATE accounts SET username='Writer',name='Halaman Contoh' WHERE platform='facebook'")
+        self.enqueue()
+        text, _ = views.accounts(self.store.accounts())
+        self.assertIn('Halaman Contoh',text)
+        self.assertNotIn('Writer',text)
+        fb = next(j for j in self.store.queue() if j['platform']=='facebook')
+        self.assertEqual(fb['username'],'Halaman Contoh')
+        self.assertEqual(self.store.account_username('facebook',identity=True),'Writer')
 
     def test_health_alert_keeps_raw_error_in_log_only(self):
         for _ in range(3):

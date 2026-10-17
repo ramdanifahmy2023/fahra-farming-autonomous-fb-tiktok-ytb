@@ -328,7 +328,8 @@ def accounts(items, page=0, *, fresh=True, page_size=8):
             state = 'Menunggu batas akun'
         if not fresh and account['connected'] and account['eligible']:
             state = 'Menunggu data lengkap'
-        lines.append(f"\n<b>{index}. {platform_name(account)}</b> · {state}\n{e(account['username'] or account['name'], 60)}")
+        name = account['username'] if account['platform'] == 'tiktok' else account['name'] or account['username']
+        lines.append(f"\n<b>{index}. {platform_name(account)}</b> · {state}\n{e(name, 60)}")
     if not items:
         lines.append('\nBelum ada akun tersinkron. Bot menunggu koneksi akun dan data lengkap.')
     return '\n'.join(lines), html_options(pagination('accounts', page, pages) + menu('accounts'))

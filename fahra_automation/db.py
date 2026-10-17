@@ -928,7 +928,8 @@ class Store:
 
     def queue(self, limit=20, offset=0):
         with self.connect() as c:
-            return [self.decode(r) for r in c.execute("""SELECT j.*,a.username AS username
+            return [self.decode(r) for r in c.execute("""SELECT j.*,
+                CASE WHEN a.platform='tiktok' THEN a.username ELSE coalesce(nullif(a.name,''),a.username) END AS username
                 FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
                 WHERE j.status NOT IN ('published','cancelled','duplicate')
                 ORDER BY j.status IN ('failed','needs_review'),j.created_at,j.rowid LIMIT ? OFFSET ?""", (limit, offset))]
@@ -992,10 +993,12 @@ class Store:
         with self.tx() as c:
             c.execute("UPDATE outbox SET sent=? WHERE id=?", (1 if delivered else -1, item_id))
 
-    def account_username(self, account_id):
+    def account_username(self, account_id, *, identity=False):
         with self.connect() as c:
-            row = c.execute("SELECT CASE WHEN platform='tiktok' THEN username ELSE coalesce(nullif(name,''),username) END FROM accounts WHERE id=?", (account_id,)).fetchone()
-            return row[0] if row else ""
+            row = c.execute('SELECT platform,username,name FROM accounts WHERE id=?', (account_id,)).fetchone()
+            if not row:
+                return ''
+            return row['username'] if identity or row['platform'] == 'tiktok' else row['name'] or row['username']
 
     def publications_to_report(self, limit=20):
         with self.connect() as c:
@@ -1067,7 +1070,9 @@ class Store:
             route = c.execute('SELECT report_chat_id FROM batch_routes WHERE batch_id=?', (batch_id,)).fetchone()
             batch['report_chat_id'] = route[0] if route else max(0, batch['chat_id'])
             batch["receipt"] = json.loads(batch["receipt"])
-            jobs = [self.decode(r) for r in c.execute("""SELECT j.*,a.username AS username FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
+            jobs = [self.decode(r) for r in c.execute("""SELECT j.*,
+                CASE WHEN a.platform='tiktok' THEN a.username ELSE coalesce(nullif(a.name,''),a.username) END AS username
+                FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
                 WHERE batch_id=? ORDER BY j.created_at,j.rowid""", (batch_id,))]
             return batch, jobs
 

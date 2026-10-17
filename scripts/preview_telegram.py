@@ -24,7 +24,8 @@ def main():
                    statuses={'queued':63,'scheduled':9,'published':39,'failed':3},
                    source_groups=[dict(origin='baru',complete=13,processing=24,attention=1)])
     accounts = [dict(platform=('tiktok','facebook','youtube')[i % 3], username=f'akun_contoh_{i + 1:02d}',
-                     name='', connected=i != 3, eligible=i != 5, blocked_until=None) for i in range(64)]
+                     name=f'Halaman contoh {i + 1:02d}' if i % 3 == 1 else f'Channel contoh {i + 1:02d}',
+                     connected=i != 3, eligible=i != 5, blocked_until=None) for i in range(64)]
     failure = copy.deepcopy(jobs[0])
     failure.update(status='failed', last_error='Unsupported get request. Missing permission.', payload={})
     cases = [('Mulai', (HELP, views.html_options(views.menu()))), ('Status', views.status(summary)),
