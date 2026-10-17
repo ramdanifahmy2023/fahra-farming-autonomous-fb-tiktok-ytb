@@ -246,7 +246,8 @@ class Repliz:
             raise
         account = data.get('data', data)
         if (not isinstance(account, dict) or not allowed_account(account) or account.get('type') != platform
-                or account.get('isConnected') is not True or account.get('id', account.get('_id')) != aid):
+                or account.get('isConnected') is not True or account.get('id', account.get('_id')) != aid
+                or not isinstance(account.get('username'), str) or not account['username'].strip()):
             raise AccountUnavailable('Akun tujuan terputus atau tidak sesuai platform.')
         return account
 

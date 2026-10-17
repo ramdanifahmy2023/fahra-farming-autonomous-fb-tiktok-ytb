@@ -78,6 +78,16 @@ class AuditRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(f.store.asset(f.asset_id)['status'], 'failed')
         f.pipeline.analyzer.analyze.assert_not_awaited()
 
+    async def test_identity_change_at_preflight_holds_before_persona_and_transport(self):
+        self.remote.check_account.return_value = {'username':'renamed_account','isConnected':True}
+        job = self.lease()
+        await self.pipeline.handle(job)
+        self.assertFalse(self.store.snapshot_fresh())
+        self.assertEqual(self.store.job(job['id'])['status'],'drive_ready')
+        self.assertEqual(self.store.job(job['id'])['attempts'],0)
+        self.remote.create.assert_not_awaited()
+        self.personas.prepare_delivery.assert_not_awaited()
+
     async def test_transient_preparation_uses_one_budget_for_the_shared_asset(self):
         f = self.f
         self.queued()

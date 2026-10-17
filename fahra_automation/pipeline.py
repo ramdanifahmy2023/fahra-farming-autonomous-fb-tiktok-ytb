@@ -82,10 +82,17 @@ class Pipeline:
         self.revalidate(job, generation)
         self.media.validate_delivery(job['payload']['render_probe'], job['platform'])
         try:
-            await self.repliz.check_account(job["account_id"], job["platform"])
+            account = await self.repliz.check_account(job["account_id"], job["platform"])
         except AccountUnavailable:
             self.store.disconnect(job["account_id"])
             raise
+        if isinstance(account, dict):
+            if account.get('publishEligible') is False:
+                self.store.capability(job['account_id'], 'publish', 'held', 'provider_denied', 'Provider menahan posting.')
+                raise ConfigurationError('Akun menunggu bukti kemampuan posting baru.')
+            if account.get('username') != self.store.account_username(job['account_id']):
+                self.store.begin_sync()
+                raise ConfigurationError('Identitas akun berubah; menunggu snapshot lengkap berikutnya.')
         self.revalidate(job, generation)
         metadata = await self.personas.prepare_delivery(job)
         self.revalidate(job, generation)
