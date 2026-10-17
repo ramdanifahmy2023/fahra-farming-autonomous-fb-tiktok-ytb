@@ -1,6 +1,6 @@
 # Rencana perbaikan Fahra Automation
 
-Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Pengguna kemudian meminta implementasi di worktree dan push main. Kode perbaikan tersedia pada branch tugas; bukti merge, CI dan penerapan akhir dicatat pada worklog dan runtime/verification/audit-fixes-20261018/. A01–A11 merujuk [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md).
+Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Pengguna kemudian meminta implementasi di worktree dan push main. Kode perbaikan c8506d3 sudah masuk main dan terpasang sekitar 01.26 WIB; verifier penuh 396/396 tes dan CI branch/main PASS. Bukti merge, CI dan penerapan dicatat pada worklog dan runtime/verification/audit-fixes-20261018/. Pengamatan operasi 48 jam masih terbuka. A01–A11 merujuk [audit 16 Oktober](AUDIT_IMPROVEMENT_20261016.md).
 
 ## Hasil implementasi
 
@@ -9,10 +9,10 @@ Diperbarui 18 Oktober 2026 berdasarkan [audit ulang](AUDIT_20261018.md). Penggun
 | Pengiriman | Guard ulang setelah limiter; intent yang belum terkirim ditutup sebagai not_sent | Fixture race menghasilkan nol POST; tidak membuat posting uji |
 | Media | Error kelompok dibuka; retry dihitung per asset; probe sebelum AI | Preview nyata 720×1280, H.264/AAC, 30 fps, tanpa mirror, hook hilang pada detik 3 |
 | Telegram | Grup menerima tanda terima umum; progres/hasil pindah ke chat pengirim | Pesan detail lama yang belum terkirim ke grup dikarantina; bot harus dibuka untuk mengaktifkan kembali DM |
-| Pemulihan | Inspect/reconcile/resolve dan retry lokal; jadwal gagal diperiksa ulang pada ID sama | Resolve berarti mencocokkan bukti, bukan memaksa status sukses; provider retry belum diaktifkan |
+| Pemulihan | Inspect/reconcile/resolve dan retry lokal; jadwal gagal diperiksa ulang pada ID sama | Pemeriksaan 47 GET: enam gagal provider, satu submit_unknown dan 20 sent_unverified tetap ditahan; nol resend |
 | Akun | Koneksi, identitas, bukti publish dan bukti reply dicatat terpisah | Capability yang hilang menunggu bukti; histori publish berlaku tujuh hari dan harus cocok identitas |
 | Operasi | Health, durasi tahap/limiter, penggunaan token, fairness pengirim, disk sebelum persiapan | Pengamatan 48 jam masih diperlukan; biaya uang tidak ditebak dari token |
-| Backup | Bundle database/jurnal/config nonrahasia/ownership beserta checksum; restore shadow | Kekurangan jurnal reply legacy dicatat terbuka; restore tidak memperoleh hak kirim |
+| Backup | Bundle database/jurnal/config nonrahasia/ownership beserta checksum; restore shadow | Backup produksi lulus; status pekerjaan/reply dan pilot416 terjaga pada migrasi v1→v2; 24 gap jurnal reply legacy dicatat, bukan diklaim pulih |
 | Cleanup | Bank/render legacy dicocokkan dengan manifest, snapshot dan mapping asal | Pemeriksaan nyata 79 asset masih ditahan karena referensi lama; nol file dihapus |
 | Hasil konten | Collector GET opsional pada 24/72/168 jam sejak verifikasi published | Default nonaktif sampai operasi stabil; lewat jendela satu jam dicatat missed, tidak diisi angka masa kini |
 
