@@ -2,6 +2,9 @@ import copy
 import json
 import sqlite3
 import tempfile
+import threading
+import shutil
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 from datetime import timedelta
 from pathlib import Path
@@ -116,6 +119,30 @@ class Operations(unittest.TestCase):
         with self.assertRaises(ValueError):
             create(self.config, self.store, self.root / 'backups')
 
+    def test_slow_bundle_copy_does_not_block_database_or_new_intents(self):
+        journal = AttemptJournal(self.config)
+        journal.begin('old-intent', {'id':'old'})
+        entered, release = threading.Event(), threading.Event()
+        original_copy = shutil.copyfile
+        def slow_copy(source, target):
+            if Path(source).suffix == '.json' and Path(source).parent.parent == journal.root:
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError('fixture copy')
+            return original_copy(source,target)
+        with ThreadPoolExecutor(max_workers=1) as executor, patch('fahra_automation.backup.shutil.copyfile', slow_copy):
+            future = executor.submit(create,self.config,self.store,self.root/'backups')
+            try:
+                self.assertTrue(entered.wait(2))
+                self.store.set('copied_after_boundary', True)
+                journal.begin('new-intent', {'id':'new'})
+            finally:
+                release.set()
+            folder = future.result(timeout=5)
+        copied = Store(folder/'workflow.sqlite3',readonly=True)
+        self.assertIsNone(copied.get('copied_after_boundary'))
+        self.assertEqual(verify(folder)['journal_states'],1)
+
     def test_legacy_reply_gap_is_explicit_and_restore_keeps_it_held(self):
         self.store.enqueue(1,1,1,[('https://www.instagram.com/reel/legacy/', 'legacy')], can_allocate=False)
         job = self.store.queue()[0]
@@ -178,6 +205,7 @@ class Privacy(unittest.IsolatedAsyncioTestCase):
             c.execute('UPDATE batch_progress SET message_id=123,done=1')
             c.execute("INSERT INTO outbox(dedupe_key,chat_id,text,created_at) VALUES('old',-100,'private details',?)", (iso(),))
             c.execute('PRAGMA user_version=1')
+        self.assertEqual(Store(self.store.path, readonly=True).summary()['schema_version'],1)
         Store(self.store.path)
         with self.store.connect() as c:
             self.assertEqual(tuple(c.execute('SELECT message_id,done FROM batch_progress').fetchone()), (None,0))

@@ -55,35 +55,38 @@ def create(config, store, destination):
     with journal.barrier(exclusive=True), store.tx():
         with store.connect() as source, closing(sqlite3.connect(folder / 'workflow.sqlite3')) as target:
             source.backup(target)
-        for path in sorted(journal.root.rglob('*.json')):
-            if path.is_symlink() or any((journal.root / p).is_symlink() for p in path.relative_to(journal.root).parents):
-                raise ValueError('Jurnal symlink tidak boleh dicadangkan.')
-            target = folder / 'attempts' / path.relative_to(journal.root)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, target)
-        ownership = config.runtime / 'ownership.json'
-        if ownership.is_file() and not ownership.is_symlink():
-            shutil.copyfile(ownership, folder / 'ownership.evidence.json')
-        safe = {section: {key: value for key, value in config.section(section).items()
-                          if key in allowed} for section, allowed in {
-            'workflow': {'project','timezone','daily_limit','window_start','window_end','schedule_lead_seconds'},
-            'video': {'crf','hook_seconds','min_duration_seconds','max_duration_seconds'},
-            'reply': {'daily_limit','max_age_hours'}}.items()}
-        safe['workflow'].update(mode='shadow', publish_enabled=False)
-        (folder / 'config.safe.json').write_text(json.dumps(safe, indent=2))
-        files = {str(p.relative_to(folder)): {'size': p.stat().st_size, 'sha256': digest_file(p)}
-                 for p in folder.rglob('*') if p.is_file()}
-        states = read_states(folder / 'attempts')
-        with closing(sqlite3.connect(folder / 'workflow.sqlite3')) as connection:
-            gaps = legacy_reply_gaps(connection, states)
-        manifest = {'version': 1, 'at': iso(), 'files': files, 'restore_mode': 'shadow',
-                    'journal_states': len(states), 'legacy_reply_gaps':gaps}
-        (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-        for p in folder.rglob('*'):
-            if p.is_file():
-                p.chmod(0o600)
-                with p.open('rb') as stream:
-                    os.fsync(stream.fileno())
+        frozen = tuple(sorted(journal.root.rglob('*.json')))
+        cut_at = iso()
+    # Journal records are immutable; copy only the filenames frozen at the database boundary.
+    for path in frozen:
+        if path.is_symlink() or any((journal.root / p).is_symlink() for p in path.relative_to(journal.root).parents):
+            raise ValueError('Jurnal symlink tidak boleh dicadangkan.')
+        target = folder / 'attempts' / path.relative_to(journal.root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    ownership = config.runtime / 'ownership.json'
+    if ownership.is_file() and not ownership.is_symlink():
+        shutil.copyfile(ownership, folder / 'ownership.evidence.json')
+    safe = {section: {key: value for key, value in config.section(section).items()
+                      if key in allowed} for section, allowed in {
+        'workflow': {'project','timezone','daily_limit','window_start','window_end','schedule_lead_seconds'},
+        'video': {'crf','hook_seconds','min_duration_seconds','max_duration_seconds'},
+        'reply': {'daily_limit','max_age_hours'}}.items()}
+    safe['workflow'].update(mode='shadow', publish_enabled=False)
+    (folder / 'config.safe.json').write_text(json.dumps(safe, indent=2))
+    files = {str(p.relative_to(folder)): {'size': p.stat().st_size, 'sha256': digest_file(p)}
+             for p in folder.rglob('*') if p.is_file()}
+    states = read_states(folder / 'attempts')
+    with closing(sqlite3.connect(folder / 'workflow.sqlite3')) as connection:
+        gaps = legacy_reply_gaps(connection, states)
+    manifest = {'version': 1, 'at': cut_at, 'files': files, 'restore_mode': 'shadow',
+                'journal_states': len(states), 'legacy_reply_gaps':gaps}
+    (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+    for p in folder.rglob('*'):
+        if p.is_file():
+            p.chmod(0o600)
+            with p.open('rb') as stream:
+                os.fsync(stream.fileno())
     verify(folder)
     return folder
 

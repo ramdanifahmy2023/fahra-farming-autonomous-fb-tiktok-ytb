@@ -892,7 +892,8 @@ class Store:
                     "paired_daily_capacity": min(p["daily_capacity"] for p in platforms.values()),
                     "reels": c.execute("SELECT count(*) FROM assets").fetchone()[0],
                     "statuses": counts, "paused": self.setting(c, "paused", False),
-                    "schema_version": SCHEMA_VERSION, "snapshot_generation": self.setting(c, 'snapshot_generation', 0),
+                    "schema_version": c.execute('PRAGMA user_version').fetchone()[0],
+                    "snapshot_generation": self.setting(c, 'snapshot_generation', 0),
                     "snapshot_fresh": self._snapshot_fresh(c)}
 
     def queue(self, limit=20):
