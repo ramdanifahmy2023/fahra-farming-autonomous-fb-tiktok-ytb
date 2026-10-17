@@ -13,7 +13,8 @@ STAGE_INDEX = {"queued": 0, "downloaded": 1, "analyzed": 2, "rendered": 3,
                "drive_ready": 4, "submitting": 4, "submit_unknown": 4, "scheduled": 4, "published": 5}
 LABELS = {"queued": "Menunggu giliran", "downloaded": "Analisis konten", "analyzed": "Edit video",
           "rendered": "Sinkronisasi Drive", "drive_ready": "Siap dikirim", "submitting": "Mengirim ke Repliz",
-          "submit_unknown": "Memeriksa pengiriman", "scheduled": "Menunggu publikasi", "published": "Sudah terbit",
+          "submit_unknown": "Memastikan hasil kirim", "scheduled": "Terjadwal", "published": "Sudah terbit",
+          "needs_review": "Perlu diperiksa",
           "failed": "Perlu diperiksa", "cancelled": "Dibatalkan", "duplicate": "Duplikat"}
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
 ZONE = ZoneInfo("Asia/Jakarta")
@@ -43,18 +44,38 @@ def label(job):
     state = job["status"]
     if state == "queued" and job.get("leased"):
         return "Mengunduh Instagram"
-    if state not in TERMINAL and job.get("last_error") and not job.get("leased"):
-        return "Menunggu Drive" if "Menunggu sinkronisasi Bank konten" in job["last_error"] else "Menunggu pemeriksaan" if not job.get("attempts") else "Menunggu percobaan ulang"
+    if state in STAGE_INDEX and STAGE_INDEX[state] < 4 and job.get("last_error") and not job.get("leased"):
+        if "snapshot" in job["last_error"].lower():
+            return "Menunggu data akun"
+        return "Menunggu Drive" if "Menunggu sinkronisasi Bank konten" in job["last_error"] else "Menunggu layanan" if not job.get("attempts") else "Menunggu percobaan ulang"
     return LABELS.get(state, "Status belum dikenali")
+
+
+def human_error(error):
+    value = error.lower()
+    if "snapshot" in value:
+        return "Data akun sedang diperbarui. Bot melanjutkan otomatis setelah data lengkap."
+    if "sinkronisasi bank konten" in value:
+        return "Menunggu salinan Google Drive. Bot melanjutkan setelah file terverifikasi."
+    if "durasi" in value or "duration" in value:
+        return "Durasi video belum sesuai. Gunakan Reel berdurasi 3 sampai 90 detik."
+    if "540" in value or "9:16" in value:
+        return "Ukuran video belum sesuai. Gunakan video tegak 9:16, minimal 540 × 960 piksel."
+    if any(word in value for word in ("restricted", "private video", "login required", "content is not available")):
+        return "Video sumber tidak bisa diakses. Periksa apakah Reel masih tersedia untuk umum."
+    if any(word in value for word in ("unsupported get request", "permission", "access token")):
+        return "Akses akun atau posting ditolak. Admin perlu memeriksa koneksi dan izin akun."
+    if any(word in value for word in ("timeout", "timed out", "internal server")):
+        return "Layanan tujuan belum berhasil memproses video. Admin perlu mencocokkan hasil kirim sebelum mencoba lagi."
+    if "json" in value and any(word in value for word in ("caption", "ai", "parse")):
+        return "Caption belum berhasil dibuat. Admin dapat memeriksa dan mengulang tahap ini."
+    return "Bot belum bisa melanjutkan tahap ini. Admin perlu memeriksa rincian kiriman."
 
 
 def note(job):
     state, error = job["status"], job.get("last_error") or ""
-    if state == "failed":
-        stage = job.get("payload", {}).get("resume_status", state)
-        cause = {"queued": "Video belum berhasil diunduh.", "downloaded": "Analisis konten belum berhasil.",
-                 "analyzed": "Edit video belum berhasil.", "rendered": "Salinan Drive belum dapat diverifikasi."}.get(stage, "Publikasi belum berhasil dikonfirmasi.")
-        return cause + " Admin dapat memeriksa detail dengan /video " + job["id"][:8] + "."
+    if state in {"failed", "needs_review"}:
+        return human_error(error)
     if state == "cancelled":
         return "Pekerjaan dibatalkan sebelum dikirim."
     if state == "duplicate":
@@ -62,11 +83,13 @@ def note(job):
     if state == "published":
         return "Tautan posting sedang diambil. Bot akan mengirimkannya otomatis." if not job["payload"].get("post_url") else ""
     if state == "submit_unknown":
-        return "Bot mencocokkan hasil pengiriman sebelum melanjutkan."
+        return "Hasil kirim belum pasti. Bot memeriksa kiriman yang sama agar video tidak terkirim dua kali."
     if state == "scheduled":
         return "Jadwal diterima. Bot menunggu konfirmasi bahwa video sudah terbit."
     if "Menunggu sinkronisasi Bank konten" in error:
         return "Video selesai diedit. Menunggu salinan Google Drive, lalu bot melanjutkan otomatis."
+    if "snapshot" in error.lower():
+        return human_error(error)
     if error and not job.get("leased"):
         if job.get("attempts"):
             return f"Tahap ini akan dicoba lagi mulai {clock_time(job.get('next_attempt'))}."
@@ -108,16 +131,23 @@ def publication(job):
     return text, html_options([[{"text": "Buka " + platform_name(job), "url": p["post_url"]}]])
 
 
-def video(job, admin=False):
+def video(job, admin=False, technical=False):
     text = f"<b>{e(label(job))}</b>\n{platform_name(job)} · Kiriman <code>{job['id'][:8]}</code>"
     username = job.get("username") or job["payload"].get("published_username")
     text += f"\n{e(username, 60)}" if username else "\nAkun menunggu alokasi"
-    text += f"\nSlot {day(job.get('slot_date'))} · {clock_time(job.get('planned_at')) or 'waktu belum dialokasikan'}\n\n{steps(job)}"
     if note(job):
         text += "\n\n" + e(note(job), 400)
-    if admin and job.get("last_error"):
+    text += f"\n\nSlot {day(job.get('slot_date'))}"
+    if job.get('planned_at'):
+        text += ' · ' + clock_time(job['planned_at'])
+    if admin and technical:
+        text += '\n\n' + steps(job)
+    if admin and technical and job.get("last_error"):
         text += "\n\n<b>Detail untuk admin</b>\n" + e(job["last_error"], 550)
     rows = []
+    if admin:
+        rows.append([{"text": "Kembali ke ringkasan" if technical else "Detail teknis",
+                      "callback_data": f"video:{job['id']}:{0 if technical else 1}"}])
     if job["status"] == "published" and job["payload"].get("post_url"):
         url = job["payload"]["post_url"]
         text += "\n\n" + e(url, 300)
@@ -135,7 +165,9 @@ def batch(batch, jobs, paused=False):
             title = label(jobs[0])
         elif all(j["status"] == "queued" and not j.get("leased") for j in jobs):
             title = "Batch masuk antrean"
-    if count["failed"]:
+        elif len({label(j) for j in jobs}) == 1:
+            title = label(jobs[0])
+    if count["failed"] or count['needs_review']:
         title = "Batch perlu diperiksa" if finished else "Proses berjalan, ada kendala"
     if not jobs:
         title = "Tidak ada video baru"
@@ -170,25 +202,34 @@ def batch(batch, jobs, paused=False):
             rows.append(nav)
         rows.append([callback("Kembali ke ringkasan", 0)])
     elif reel_count == 1:
-        j = jobs[0]
+        j = max(jobs, key=lambda item: STAGE_INDEX.get(item['status'], STAGE_INDEX.get(item['payload'].get('resume_status'), 0)))
         hook = j["payload"].get("generated", {}).get("hook")
         if hook:
             lines.append("\n" + e(hook, 100))
-        lines.append("\n" + "\n".join(steps(j).splitlines()[:4]))
+        index = STAGE_INDEX.get(j['status'], STAGE_INDEX.get(j['payload'].get('resume_status'), 0))
+        lines.append("\n" + ("Persiapan video selesai." if index >= 4 else
+                     f"Persiapan {index + 1}/4 · {e(STAGES[index])}"))
+        shared_notes = {}
         for target in jobs:
-            lines.append(f"\n<b>{platform_name(target)} · {e(label(target))}</b>\n"
-                         f"{e(target.get('username') or 'Akun menunggu alokasi', 50)} · {day(target.get('slot_date'))}")
-            if note(target):
-                lines.append(e(note(target), 320))
+            lines.append(f"\n<b>{platform_name(target)}</b> · {e(label(target))}\n"
+                         f"{e(target.get('username') or 'Akun menunggu alokasi', 50)}")
+            if target.get('planned_at') and target['status'] != 'published':
+                lines.append(f"{day(target.get('slot_date'))} · {clock_time(target['planned_at'])}")
+            explanation = note(target)
+            if explanation:
+                shared_notes.setdefault(explanation, []).append(platform_name(target))
             if target["status"] == "published" and target["payload"].get("post_url"):
                 rows.append([{"text": "Buka " + platform_name(target), "url": target["payload"]["post_url"]}])
+        if shared_notes:
+            lines.append("\n" + "\n".join((e(', '.join(targets)) + ': ' if len(targets) < len(jobs) else '') + e(message, 320)
+                                           for message, targets in shared_notes.items()))
         rows.append([callback("Rincian semua tujuan", 1)])
         rows.append([{"text": "Lihat Reel sumber", "url": j["url"]}])
     else:
         active = len(jobs) - sum(count[s] for s in TERMINAL) - count["queued"]
         lines.extend([f"\n<b>{count['published']} dari {len(jobs)} kiriman terbit</b>",
                       f"Menunggu giliran: {count['queued']}\nDalam proses: {active}"])
-        for key in ("failed", "cancelled", "duplicate"):
+        for key in ("failed", "needs_review", "cancelled", "duplicate"):
             if count[key]:
                 lines.append(f"{LABELS[key]}: {count[key]}")
         for platform in ("tiktok", "facebook", "youtube"):
@@ -214,15 +255,80 @@ def batch(batch, jobs, paused=False):
 
 
 def status(summary):
-    lines = ["<b>Status workflow</b>", day(summary["date"]) + " · WIB",
-             f"\nAntrean {'dijeda' if summary['paused'] else 'aktif'} · {summary['accounts']} akun",
-             f"Slot hari ini: {summary['reserved_or_published']}/{summary['daily_capacity']}",
-             "Mencakup reservasi dan publikasi."]
+    lines = ["<b>Antrean dijeda</b>" if summary['paused'] else "<b>Antrean aktif</b>",
+             day(summary["date"]) + " · WIB"]
+    if summary.get('sync_error'):
+        lines.append("\nData akun belum berhasil diperbarui. Bot mencoba lagi otomatis; pengiriman baru menunggu data lengkap.")
+    elif summary.get('sync_in_progress'):
+        lines.append("\nMemperbarui data akun. Pengiriman baru menunggu data lengkap.")
+    elif not summary.get('snapshot_fresh', True):
+        lines.append("\nData akun belum siap. Pengiriman baru menunggu pembaruan.")
+    if summary.get('sync_last_success_at'):
+        stamp = datetime.fromisoformat(summary['sync_last_success_at']).astimezone(ZONE)
+        lines.append(f"Data lengkap terakhir: {day(stamp.date().isoformat())}, {stamp:%H:%M} WIB")
+    for group in summary.get('source_groups', []):
+        lines.extend(["\n<b>Reel baru</b>" if group['origin'] == 'baru' else "\n<b>Histori lama</b>",
+                      f"{group['complete']} selesai · {group['processing']} diproses · {group['attention']} perlu diperiksa"])
+        if group.get('stopped'):
+            lines.append(f"{group['stopped']} dibatalkan atau dilewati")
+    lines.extend(["\n<b>Slot kirim hari ini</b>",
+                  f"{summary['reserved_or_published']} terpakai dari {summary['daily_capacity']} · {summary['accounts']} akun",
+                  "Termasuk jadwal yang belum terbit."])
     for platform, values in summary.get("platforms", {}).items():
         lines.append(f"{platform_name({'platform': platform})}: {values['accounts']} akun · "
                      f"{values['reserved_or_published']}/{values['daily_capacity']} slot")
-    lines.append("\n<b>Seluruh kiriman</b>")
-    lines += [f"{LABELS.get(s, s)}: {n}" for s, n in summary["statuses"].items()]
+    if summary['statuses']:
+        lines.append("\n<b>Kiriman semua platform</b>")
+        lines += [f"{LABELS.get(s, s)}: {n}" for s, n in summary["statuses"].items() if n]
     if not summary["statuses"]:
-        lines.append("Belum ada video. Kirim link Reel untuk memulai.")
-    return "\n".join(lines), html_options()
+        lines.append("\nBelum ada video. Kirim link Reel untuk memulai.")
+    return "\n".join(lines), html_options(menu('status'))
+
+
+def menu(current=None):
+    choices = [('Status', 'status'), ('Antrean', 'queue'), ('Daftar akun', 'accounts'), ('Bantuan', 'help')]
+    buttons = [{'text': text, 'callback_data': f'panel:{key}:0'} for text, key in choices if key != current]
+    return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+
+
+def pagination(kind, page, pages):
+    buttons = []
+    if page:
+        buttons.append({'text': 'Sebelumnya', 'callback_data': f'panel:{kind}:{page - 1}'})
+    if page + 1 < pages:
+        buttons.append({'text': 'Berikutnya', 'callback_data': f'panel:{kind}:{page + 1}'})
+    return [buttons] if buttons else []
+
+
+def queue(jobs, total, page=0, page_size=6):
+    pages = max(1, ceil(total / page_size))
+    lines = ['<b>Antrean kiriman</b>', f'{total} kiriman · halaman {page + 1}/{pages}']
+    buttons = []
+    for index, job in enumerate(jobs, page * page_size + 1):
+        lines.append(f"\n<b>{index}. {platform_name(job)}</b> · {e(label(job))}\n"
+                     f"{e(job.get('username') or 'Akun menunggu alokasi', 50)} · <code>{job['id'][:8]}</code>")
+        buttons.append({'text': f"Lihat {index} · {platform_name(job)}", 'callback_data': f"video:{job['id']}:0"})
+    if not jobs:
+        lines.append('\nBelum ada kiriman dalam antrean. Kirim link Reel untuk memulai.')
+    else:
+        lines.append('\nPilih kiriman untuk melihat alasan menunggu atau kendalanya.')
+    rows = [buttons[i:i + 2] for i in range(0,len(buttons),2)] + pagination('queue', page, pages) + menu('queue')
+    return '\n'.join(lines), html_options(rows)
+
+
+def accounts(items, page=0, *, fresh=True, page_size=8):
+    pages = max(1, ceil(len(items) / page_size))
+    page = min(page, pages - 1)
+    lines = ['<b>Akun tujuan</b>', f'{len(items)} akun · halaman {page + 1}/{pages}']
+    if not fresh:
+        lines.append('\nMenunggu data lengkap. Daftar di bawah berasal dari pembaruan terakhir.')
+    for index, account in enumerate(items[page * page_size:(page + 1) * page_size], page * page_size + 1):
+        state = 'Terhubung' if account['connected'] and account['eligible'] else 'Perlu pemeriksaan' if account['connected'] else 'Koneksi terputus'
+        if account['connected'] and account.get('blocked_until') and datetime.fromisoformat(account['blocked_until']) > datetime.now(ZONE):
+            state = 'Menunggu batas akun'
+        if not fresh and account['connected'] and account['eligible']:
+            state = 'Menunggu data lengkap'
+        lines.append(f"\n<b>{index}. {platform_name(account)}</b> · {state}\n{e(account['username'] or account['name'], 60)}")
+    if not items:
+        lines.append('\nBelum ada akun tersinkron. Bot menunggu koneksi akun dan data lengkap.')
+    return '\n'.join(lines), html_options(pagination('accounts', page, pages) + menu('accounts'))

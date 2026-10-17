@@ -349,10 +349,15 @@ class Pipeline:
 
     async def sync_loop(self):
         while True:
+            started = time.monotonic()
+            delay = self.config.section("workflow")["sync_interval_seconds"]
             try:
                 await self.repliz.sync(self.store)
-                self.store.health('account_sync', 'ok')
+                self.store.health('account_sync', 'ok', duration_ms=(time.monotonic()-started)*1000)
             except Exception as exc:
                 self.store.record("repliz_sync_failed", error=safe_error(exc))
-                self.store.health('account_sync', 'error', reason=safe_error(exc))
-            await asyncio.sleep(self.config.section("workflow")["sync_interval_seconds"])
+                self.store.set('sync_error', safe_error(exc))
+                self.store.health('account_sync', 'error', reason=safe_error(exc),
+                                  duration_ms=(time.monotonic()-started)*1000)
+                delay = min(delay, 30)
+            await asyncio.sleep(delay)

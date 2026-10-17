@@ -12,7 +12,7 @@ import test_pipeline as fixtures
 from fahra_automation.config import ConfigurationError
 from fahra_automation.downloader import Downloader
 from fahra_automation.media import Media
-from fahra_automation.repliz import Repliz
+from fahra_automation.repliz import Repliz, SharedRateLimiter
 
 
 class AuditRegressions(unittest.IsolatedAsyncioTestCase):
@@ -39,8 +39,7 @@ class AuditRegressions(unittest.IsolatedAsyncioTestCase):
                 f.store.apply_snapshot(f.accounts, [], '2026-10-16', '2027-10-17')
                 job = f.lease()
                 requests = []
-                class Limiter:
-                    lock = asyncio.Lock()
+                class Limiter(SharedRateLimiter):
                     async def wait(self):
                         if mode == 'snapshot':
                             f.store.begin_sync()

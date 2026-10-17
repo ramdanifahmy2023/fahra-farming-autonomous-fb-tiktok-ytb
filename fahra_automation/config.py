@@ -68,6 +68,7 @@ class Config:
         for key, minimum, maximum in (
                 ('schedule_lead_seconds', 30, 3600), ('max_attempts', 1, 10),
                 ('sync_interval_seconds', 30, 600), ('max_batch_links', 1, 100),
+                ('sync_timeout_seconds', 30, 600),
                 ('max_pending_assets', 1, 10000), ('render_horizon_hours', 1, 168),
                 ('backup_interval_seconds', 300, 86400), ('min_free_disk_gb', 1, 10000)):
             if type(wf.get(key)) is not int or not minimum <= wf[key] <= maximum:

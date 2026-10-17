@@ -226,6 +226,7 @@ class Store:
             generation = self.setting(c, 'snapshot_generation', 0) + 1
             self.put_setting(c, 'snapshot_generation', generation)
             self.put_setting(c, 'sync_in_progress', True)
+            self.put_setting(c, 'sync_started_at', iso())
             self.put_setting(c, 'repliz_synced_at', None)
             return generation
 
@@ -429,6 +430,8 @@ class Store:
             self.put_setting(c, 'snapshot_from_day', from_day)
             self.put_setting(c, 'snapshot_to_day', to_day)
             self.put_setting(c, 'repliz_synced_at', iso())
+            self.put_setting(c, 'sync_last_success_at', iso())
+            self.put_setting(c, 'sync_error', None)
             self.put_setting(c, 'sync_in_progress', False)
             return {**changes, 'generation': generation}
 
@@ -837,6 +840,18 @@ class Store:
             raise ValueError('Status jadwal tidak dikenal.')
         c.execute('UPDATE jobs SET slot_date=?,planned_at=?,counts_quota=1,schedule_id=?,updated_at=? WHERE id=?',
                   (day, iso(stamp), sid, iso(), job['id']))
+        if schedule['status'] == 'error' and job['status'] != 'published':
+            payload = json.loads(job['payload'])
+            payload.update(failure_kind='provider', next_poll=iso(now() + timedelta(minutes=15)))
+            error = safe_error(schedule.get('errorMessage') or job['last_error'] or 'Provider melaporkan kiriman gagal.')
+            c.execute("UPDATE jobs SET status='failed',last_error=?,payload=?,leased=0 WHERE id=?",
+                      (error, json.dumps(payload, ensure_ascii=False), job['id']))
+            c.execute('UPDATE assets SET leased_job_id=NULL WHERE leased_job_id=?', (job['id'],))
+            c.execute("""UPDATE submission_attempts SET status='failed',updated_at=? WHERE job_id=?
+                AND id=(SELECT max(id) FROM submission_attempts WHERE job_id=?)""", (iso(), job['id'], job['id']))
+            if job['status'] != 'failed':
+                self.event(c, 'status_changed', job['id'], status='failed', reason='provider_snapshot')
+                c.execute('UPDATE batch_progress SET done=0,next_poll=? WHERE batch_id=?', (iso(), job['batch_id']))
         if job['status'] == 'failed' and schedule['status'] in {'pending', 'process', 'success'}:
             payload = json.loads(job['payload'])
             payload['next_poll'] = ''
@@ -862,7 +877,7 @@ class Store:
             return [self.decode(r) for r in c.execute("""SELECT * FROM jobs WHERE
                 (status IN ('submitting','submit_unknown','scheduled') OR (status='failed' AND schedule_id IS NOT NULL))
                 AND coalesce(json_extract(payload,'$.next_poll'),'')<=?
-                ORDER BY coalesce(json_extract(payload,'$.next_poll'),''),updated_at LIMIT 100""", (iso(),))]
+                ORDER BY coalesce(json_extract(payload,'$.next_poll'),''),updated_at LIMIT 10""", (iso(),))]
 
     def duplicate_hash(self, job_id, digest):
         with self.connect() as c:
@@ -887,20 +902,40 @@ class Store:
             platforms = {p: {"accounts": sum(a["platform"] == p for a, n in loads.values()),
                              "daily_capacity": self.daily_limit * sum(a["platform"] == p for a, n in loads.values()),
                              "reserved_or_published": sum(n for a, n in loads.values() if a["platform"] == p)} for p in PLATFORMS}
+            sources = [dict(r) for r in c.execute("""SELECT origin,count(*) total,
+                sum(complete) complete,sum(issue AND NOT complete) attention,
+                sum(NOT complete AND NOT issue AND NOT stopped) processing,
+                sum(stopped AND NOT complete AND NOT issue) stopped FROM (
+                  SELECT a.id,CASE WHEN json_extract(a.payload,'$.legacy_origin') IS NULL
+                    THEN 'baru' ELSE 'legacy' END origin,min(j.status='published') complete,
+                    max(j.status IN ('failed','needs_review')) issue,
+                    min(j.status IN ('published','cancelled','duplicate')) stopped
+                  FROM assets a JOIN jobs j ON j.asset_id=a.id GROUP BY a.id
+                ) GROUP BY origin""")]
             return {"date": day, "accounts": len(loads), "reserved_or_published": sum(n for a, n in loads.values()),
                     "daily_capacity": len(loads) * self.daily_limit, "daily_limit": self.daily_limit, "platforms": platforms,
                     "paired_daily_capacity": min(p["daily_capacity"] for p in platforms.values()),
                     "reels": c.execute("SELECT count(*) FROM assets").fetchone()[0],
+                    "source_groups": sources,
+                    "sync_in_progress": self.setting(c, 'sync_in_progress', False),
+                    "sync_started_at": self.setting(c, 'sync_started_at'),
+                    "sync_last_success_at": self.setting(c, 'sync_last_success_at', self.setting(c, 'repliz_synced_at')),
+                    "sync_error": self.setting(c, 'sync_error'),
                     "statuses": counts, "paused": self.setting(c, "paused", False),
                     "schema_version": c.execute('PRAGMA user_version').fetchone()[0],
                     "snapshot_generation": self.setting(c, 'snapshot_generation', 0),
                     "snapshot_fresh": self._snapshot_fresh(c)}
 
-    def queue(self, limit=20):
+    def queue(self, limit=20, offset=0):
         with self.connect() as c:
-            return [dict(r) for r in c.execute("""SELECT j.id,j.status,j.platform,j.slot_date,a.name AS username,j.last_error
+            return [self.decode(r) for r in c.execute("""SELECT j.*,a.username AS username
                 FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
-                WHERE j.status NOT IN ('published','cancelled','duplicate') ORDER BY j.created_at LIMIT ?""", (limit,))]
+                WHERE j.status NOT IN ('published','cancelled','duplicate')
+                ORDER BY j.status IN ('failed','needs_review'),j.created_at,j.rowid LIMIT ? OFFSET ?""", (limit, offset))]
+
+    def queue_count(self):
+        with self.connect() as c:
+            return c.execute("SELECT count(*) FROM jobs WHERE status NOT IN ('published','cancelled','duplicate')").fetchone()[0]
 
     def cancel(self, job_id):
         with self.tx() as c:
@@ -1032,7 +1067,7 @@ class Store:
             route = c.execute('SELECT report_chat_id FROM batch_routes WHERE batch_id=?', (batch_id,)).fetchone()
             batch['report_chat_id'] = route[0] if route else max(0, batch['chat_id'])
             batch["receipt"] = json.loads(batch["receipt"])
-            jobs = [self.decode(r) for r in c.execute("""SELECT j.*,a.name AS username FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
+            jobs = [self.decode(r) for r in c.execute("""SELECT j.*,a.username AS username FROM jobs j LEFT JOIN accounts a ON a.id=j.account_id
                 WHERE batch_id=? ORDER BY j.created_at,j.rowid""", (batch_id,))]
             return batch, jobs
 
