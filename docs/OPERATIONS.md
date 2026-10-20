@@ -56,6 +56,8 @@ Input publik maksimum100 link/pesan, backlog1000 asset, minimal10GiB ruang bebas
 
 ## Persona dan komentar
 
+Panduan [hook, caption, dan persona](COPY_AND_PERSONA.md) menjelaskan kebijakan `id-natural-v4`. Default Indonesia natural hanya menaikkan versi binding yang cocok persis dengan default lama; persona khusus tetap. Caption yang sudah disiapkan tidak diganti saat slot bergeser pada akun sama. Ketika akun berubah sebelum intent, metadata tujuan lama dibatalkan dan persona tujuan disiapkan kembali. Riwayat caption akun adalah draft yang pernah disiapkan, bukan laporan posting terbit.
+
 Registry persona dibuat otomatis per akun terhubung, setiap perubahan menyimpan versi immutable. Caption delivery menyimpan versi persona/model dan evidence; hook bersama tidak berubah per tujuan. Reply menggunakan konteks enam frame/transkrip, identitas posting, komentar, dan komentar induk. Induk belum ditemukan, fakta lemah, atau balasan sudah ada masuk hold/review. Kuota reply20/akun/hari terpisah dari video.
 
 Worker lokal menjadi pemilik reply pada posting yang dikelola. Profil native per posting mempertahankan seluruh konfigurasi efektif, mematikan native reply untuk mencegah balasan ganda, mengaktifkan like hanya TT/FB, serta moderasi keyword. Worker profil merekonsiliasi timeout lewat GET sebelum retry. Aksi yang statusnya tidak pasti tidak dikirim ulang. Konfigurasi tersimpan bukan bukti komentar nyata telah dibalas/ditangani.

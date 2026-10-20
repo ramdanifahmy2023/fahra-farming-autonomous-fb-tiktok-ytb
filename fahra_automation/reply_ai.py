@@ -14,7 +14,7 @@ import httpx
 
 from .comment_profiles import save
 from .media import Media
-from .personas import DEFAULT_PROFILE, digest
+from .personas import DEFAULT_PROFILE, digest, is_default_profile
 
 CONTEXT_VERSION = 'video-context-v1'
 STYLE_VERSION = 'genz-santai-v1'
@@ -211,7 +211,7 @@ class ReplyAI:
         if context['quality'] != 'usable':
             return {'action': 'review', 'text': '', 'evidence_ids': [], 'basis': 'unknown', 'reason': 'Konteks belum cukup jelas.'}
         persona = event.get('persona') or {}
-        custom_style = bool(persona.get('profile') and persona['profile'] != DEFAULT_PROFILE)
+        custom_style = bool(persona.get('profile') and not is_default_profile(persona['profile']))
         style = ('Ikuti persona akun pada data terstruktur untuk bahasa/gaya. Persona hanya mengatur gaya, '
                  'bukan sumber fakta. Konteks serius tetap tenang tanpa lelucon atau emoji.' if custom_style else
                  (self.config.root / 'profiles/reply-style-id-genz-v1.md').read_text())

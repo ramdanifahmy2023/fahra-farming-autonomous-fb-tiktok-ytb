@@ -651,6 +651,22 @@ class Store:
                 ORDER BY created_at DESC, rowid DESC LIMIT ?""", (exclude_job_id, min(8, max(0, limit)))).fetchall()
         return [{k: json.loads(r["generated"]).get(k, "") for k in ("hook", "caption")} for r in rows]
 
+    def recent_delivery_captions(self, account_id, exclude_job_id, limit=8):
+        """Prepared captions are style references, not evidence that a post was published."""
+        if not account_id:
+            return []
+        with self.connect() as c:
+            current = c.execute('SELECT asset_id FROM jobs WHERE id=?', (exclude_job_id,)).fetchone()
+            if current is None:
+                return []
+            rows = c.execute("""SELECT json_extract(payload,'$.delivery_metadata.caption') AS caption
+                FROM jobs WHERE account_id=? AND id != ? AND asset_id != ?
+                AND json_extract(payload,'$.delivery_metadata.account_id')=?
+                AND json_type(payload,'$.delivery_metadata.caption')='text'
+                ORDER BY updated_at DESC,rowid DESC LIMIT ?""",
+                (account_id, exclude_job_id, current['asset_id'], account_id, min(8, max(0, limit)))).fetchall()
+        return [{'caption': r['caption'][:360]} for r in rows if r['caption'].strip()]
+
     @staticmethod
     def decode(row):
         value = dict(row)
@@ -706,13 +722,25 @@ class Store:
                 c.execute('UPDATE jobs SET snapshot_generation=? WHERE id=?', (self.setting(c, 'snapshot_generation'), job_id))
                 return job["slot_date"]
             payload = json.loads(job['payload'])
-            for key in ('persona', 'persona_version', 'delivery_generated', 'delivery_metadata'):
-                payload.pop(key, None)
-            c.execute("UPDATE jobs SET counts_quota=0,account_id=NULL,slot_date=NULL,planned_at=NULL,payload=? WHERE id=?",
-                      (json.dumps(payload, ensure_ascii=False), job_id))
-            if self.allocate(c, job_id, day):
-                return c.execute("SELECT slot_date FROM jobs WHERE id=?", (job_id,)).fetchone()[0]
-            return None
+            metadata = payload.get('delivery_metadata')
+            origin = metadata.get('account_id') if isinstance(metadata, dict) else None
+            if not isinstance(origin, str) or not origin:
+                origin = None
+            c.execute("UPDATE jobs SET counts_quota=0,account_id=NULL,slot_date=NULL,planned_at=NULL WHERE id=?", (job_id,))
+            allocated = self.allocate(c, job_id, day)
+            assigned = c.execute('SELECT account_id,slot_date FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if not assigned['account_id'] or assigned['account_id'] != job['account_id']:
+                for key in ('persona', 'persona_version', 'delivery_generated'):
+                    payload.pop(key, None)
+            # A temporary lack of slots must not discard an account-pinned caption.
+            if assigned['account_id']:
+                if assigned['account_id'] != (origin or job['account_id']):
+                    payload.pop('delivery_metadata', None)
+            elif not origin:
+                payload.pop('delivery_metadata', None)
+            if payload != json.loads(job['payload']):
+                c.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(payload, ensure_ascii=False), job_id))
+            return assigned['slot_date'] if allocated else None
 
     def checkpoint(self, job_id, status=None, payload=None, **updates):
         allowed = {"attempts", "next_attempt", "last_error", "schedule_id", "counts_quota", "leased", "slot_date", "planned_at"}

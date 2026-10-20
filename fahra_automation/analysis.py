@@ -82,6 +82,7 @@ class Analyzer:
         trace = {"policy_version": POLICY_VERSION, "model": self.config.section("ai")["model"], "attempts": []}
         folder.mkdir(parents=True, exist_ok=True)
         evidence = None
+        observation_snapshot = None
         for stage in ("observe", "write"):
             if stage == "write":
                 content = json.dumps({"observations": evidence["observations"], "tone": evidence["tone"],
@@ -101,6 +102,20 @@ class Analyzer:
                     data = json.loads(raw)
                     if stage == "write" and isinstance(data, dict):
                         data["confidence"] = evidence["confidence"]
+                    if stage == "observe" and isinstance(data, dict):
+                        if observation_snapshot is not None:
+                            confidence = data.get('confidence')
+                            valid_score = (type(confidence) in (int, float) and math.isfinite(confidence)
+                                           and 0 <= confidence <= 1)
+                            data.update(observation_snapshot)
+                            if valid_score:
+                                data['confidence'] = min(confidence, observation_snapshot['confidence'])
+                        else:
+                            confidence = data.get('confidence')
+                            if (type(confidence) in (int, float) and math.isfinite(confidence) and .5 <= confidence <= 1
+                                    and isinstance(data.get('observations'), str) and data['observations'].strip()
+                                    and data.get('tone') in {'ringan', 'hangat', 'praktis', 'serius', 'netral'}):
+                                observation_snapshot = {key: data[key] for key in ('observations', 'tone', 'confidence')}
                     generated = self.validate(data)
                     # Repair new shared hooks here; delivery-only edits keep their already rendered hook.
                     layout_hook(generated['hook'], 540, 960)
@@ -109,7 +124,7 @@ class Analyzer:
                             raise ValueError("Catat bukti konten pada observations sebelum menulis caption.")
                         if data.get("tone") not in {"ringan", "hangat", "praktis", "serius", "netral"}:
                             raise ValueError("Pilih tone sesuai konteks: ringan, hangat, praktis, serius, atau netral.")
-                    issues = editorial_issues(generated, recent) if stage == "write" else []
+                    issues = editorial_issues(generated, recent, tone=evidence['tone']) if stage == "write" else []
                 except LowConfidenceError as exc:
                     # The editor must never turn uncertain evidence into a passing confidence score.
                     entry["issues"] = [str(exc)]
@@ -126,7 +141,7 @@ class Analyzer:
                 if attempt == 0:
                     messages.extend([{"role": "assistant", "content": raw}, {"role": "user", "content":
                         "Perbaiki JSON/gaya sekali berdasarkan bukti yang sama. Jangan menambah fakta atau menaikkan confidence. "
-                        + json.dumps({"perbaikan": issues}, ensure_ascii=False)}])
+                        + json.dumps({"perbaikan": issues, "frozen_evidence": observation_snapshot}, ensure_ascii=False)}])
             if issues:
                 raise ValueError("Caption belum lolos pemeriksaan setelah satu perbaikan: " + "; ".join(issues))
         return {"generated": generated, "caption_policy_version": POLICY_VERSION,
@@ -166,7 +181,7 @@ class Analyzer:
                 "analysis_frames": [str(p) for p in frames]}
 
     @staticmethod
-    def validate_delivery_metadata(data, job):
+    def validate_delivery_metadata(data, job, recent_captions=()):
         if not isinstance(data, dict):
             raise ValueError('Metadata tujuan harus object.')
         review = job['payload'].get('caption_review') or {}
@@ -180,7 +195,9 @@ class Analyzer:
             raise ValueError('Judul YouTube wajib diisi.')
         if re.search(r'[#@]|https?://|www\.', title, re.I):
             raise ValueError('Judul tidak boleh memuat hashtag, mention, atau tautan.')
-        issues = editorial_issues(generated)
+        # The hook is already burned into the video; only new delivery text can be repaired.
+        issues = editorial_issues({**generated, 'title': title}, recent_captions,
+                                  include_hook=False, tone=review.get('tone'))
         if issues:
             raise ValueError('; '.join(issues))
         tags = data.get('tags', [])
@@ -190,9 +207,6 @@ class Analyzer:
         tags = list(dict.fromkeys(t.strip() for t in tags))
         if len(','.join(tags)) > 500 or job['platform'] != 'youtube' and tags:
             raise ValueError('Tags hanya untuk YouTube, maksimal total 500 karakter.')
-        if review.get('tone') == 'serius' and any(0x1F000 <= ord(c) <= 0x1FAFF or
-                0x2600 <= ord(c) <= 0x27BF for c in title + generated['caption']):
-            raise ValueError('Metadata konten serius tidak memakai emoji.')
         description = generated['caption'] + '\n\n' + ' '.join(generated['hashtags'])
         return {'title': title, 'caption': generated['caption'], 'description': description,
                 'hashtags': generated['hashtags'], 'tags': tags}
@@ -202,10 +216,12 @@ class Analyzer:
         review = job['payload'].get('caption_review') or {}
         if not review.get('observations') or not isinstance(review.get('confidence'), (float, int)) or review['confidence'] < .5:
             raise LowConfidenceError('Metadata tujuan memerlukan bukti video dan confidence awal.')
+        recent = self.store.recent_delivery_captions(job['account_id'], job['id'], limit=8) if self.store else []
         content = {'platform': job['platform'], 'persona': persona['profile'], 'observations': review['observations'],
                    'confidence': review['confidence'], 'tone': review.get('tone'),
                    'transcript': job['payload'].get('transcript', '')[:16000],
-                   'shared_hook': job['payload']['generated']['hook'], 'draft': job['payload']['generated']}
+                   'shared_hook': job['payload']['generated']['hook'], 'draft': job['payload']['generated'],
+                   'recent_captions': recent}
         messages = [{'role': 'system', 'content': DELIVERY_PROMPT},
                     {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}]
         trace = {'policy_version': POLICY_VERSION, 'model_requested': cfg['model'], 'attempts': []}
@@ -222,7 +238,7 @@ class Analyzer:
                 entry = {'response': raw, 'model': body.get('model')}
                 trace['attempts'].append(entry)
                 try:
-                    result = self.validate_delivery_metadata(json.loads(raw), job)
+                    result = self.validate_delivery_metadata(json.loads(raw), job, recent)
                 except (ValueError, TypeError, KeyError) as exc:
                     entry['error'] = str(exc)
                     self.save_review(folder, trace)

@@ -7,17 +7,34 @@ from contextlib import nullcontext
 from .config import EXCLUDED_ACCOUNT_ID
 from .util import iso
 
-DEFAULT_PROFILE = {
+LEGACY_DEFAULT_PROFILE = {
     'name': 'Indonesia santai', 'language': 'id',
     'instructions': 'Bahasa Indonesia santai/lucu Gen Z sesuai konteks, singkatan wajar, '
                     '0–2 emoji bila cocok. Konten serius tetap tenang tanpa lelucon. '
                     'Jangan mengarang pengalaman pribadi, fakta, identitas, atau janji.',
+}
+DEFAULT_PROFILE = {
+    'name': 'Indonesia natural', 'language': 'id',
+    'instructions': 'Tulis seperti mengirim video ke teman: pilih satu detail konkret yang didukung '
+                    'bukti, lalu beri pengamatan atau reaksi singkat. Pertahankan sudut hook dan '
+                    'caption bersama; jangan kembali menjadi narator urutan adegan. Bahasa Indonesia '
+                    'sehari-hari, singkatan dan humor hanya bila pas, tanpa memaksa slang Gen Z, '
+                    'punchline, sapaan, atau pertanyaan. Nol sampai dua emoji untuk konteks ringan '
+                    'bila membantu; konten serius tenang tanpa humor atau emoji. Jangan mengarang '
+                    'pengalaman pribadi, fakta, identitas, penyebab, atau janji.',
 }
 PLATFORMS = {'tiktok', 'facebook', 'youtube'}
 
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+LEGACY_DEFAULT_HASH = digest(LEGACY_DEFAULT_PROFILE)
+
+
+def is_default_profile(profile):
+    return isinstance(profile, dict) and profile in (LEGACY_DEFAULT_PROFILE, DEFAULT_PROFILE)
 
 
 def validate_profile(profile):
@@ -56,7 +73,8 @@ class PersonaRegistry:
             if current and current['platform'] != platform:
                 raise ValueError('Platform identitas akun berubah.')
             if profile is None and current:
-                return self.decode(current)
+                if current['hash'] != LEGACY_DEFAULT_HASH or json.loads(current['profile']) != LEGACY_DEFAULT_PROFILE:
+                    return self.decode(current)
             clean = validate_profile(profile if profile is not None else DEFAULT_PROFILE)
             profile_hash = digest(clean)
             if current and current['hash'] == profile_hash:

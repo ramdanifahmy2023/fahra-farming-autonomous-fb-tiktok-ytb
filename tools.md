@@ -95,6 +95,8 @@ Adapter Repliz menambahkan tepat satu `source: @username` sebelum hashtag pada c
 
 ## Kendali reply dan batch
 
+Kebijakan tulisan `id-natural-v4` dan versi default persona dijelaskan pada [COPY_AND_PERSONA.md](docs/COPY_AND_PERSONA.md). Binding default lama diperbarui idempotent saat dibaca untuk pemrosesan berikutnya, hanya jika isi dan hash cocok; tidak memerlukan mutasi profil native Repliz. Perubahan kode membutuhkan restart layanan, sedangkan metadata tujuan/draft yang sudah tersimpan tetap memakai snapshotnya. Pergeseran slot dengan akun sama tidak menghapus caption. Riwayat maksimal delapan caption yang pernah disiapkan untuk akun yang sama menjadi pembanding bahasa saja.
+
 Profil default `profiles/reply-style-id-genz-v1.md` dibaca ulang oleh `ReplyAI.draft` setiap membuat draft baru. Penyuntingan file profil saja tidak memerlukan restart; draft tersimpan dan persona khusus akun tetap memakai jalurnya sendiri. Hint worker masih menentukan emoji dan penggunaan singkatan per komentar. Pilihan kata/emoji yang lebih luas di profil tidak mengubah algoritme hint atau validator.
 
 Renderer hook memakai Pillow dari `requirements.lock` dan font Barlow yang ikut paket. Setelah pembaruan dependency, pasang `.venv/bin/python -m pip install -r requirements.lock` sebelum restart. Pemeriksaan tampilan harus memakai render terisolasi tanpa publikasi, termasuk sumber 60 fps dan frame output 89/90 pada 30 fps. `hook-layout.json` mencatat gaya dan ukuran setiap render. Lihat [HOOK_VISUAL.md](docs/HOOK_VISUAL.md); jangan menghapus lisensi font atau mengganti hash verifier tanpa audit sumber font.

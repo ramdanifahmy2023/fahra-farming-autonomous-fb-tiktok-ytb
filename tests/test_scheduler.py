@@ -142,6 +142,84 @@ class SchedulerTest(unittest.TestCase):
         self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), self.at.date().isoformat())
         self.assertEqual(self.store.job(job['id'])['account_id'], 'tiktok-1')
 
+    def prepared_caption(self, job):
+        metadata = {'account_id': job['account_id'], 'platform': job['platform'],
+                    'caption': 'Caption yang sudah disiapkan.', 'persona_version': 1,
+                    'evidence_hash': 'fixture-evidence'}
+        self.store.checkpoint(job['id'], payload={'delivery_metadata': metadata,
+            'persona': {'name': 'Lama'}, 'persona_version': 1,
+            'delivery_generated': {'caption': 'Draft lama.'}})
+        return metadata
+
+    def test_expired_slot_same_account_preserves_prepared_caption_and_persona(self):
+        job = self.ready()
+        metadata = self.prepared_caption(job)
+        before = self.store.job(job['id'])['payload']
+        self.at = parse_time(job['planned_at']).astimezone(ZONE) + timedelta(seconds=60)
+        self.sync()
+        self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), self.at.date().isoformat())
+        current = self.store.job(job['id'])
+        self.assertEqual(current['account_id'], job['account_id'])
+        self.assertNotEqual(current['planned_at'], job['planned_at'])
+        self.assertEqual(current['payload'], before)
+        self.assertEqual(current['payload']['delivery_metadata'], metadata)
+        self.assertEqual(current['counts_quota'], 1)
+
+    def test_reassignment_to_different_account_clears_only_delivery_copy(self):
+        job = self.ready()
+        self.prepared_caption(job)
+        self.sync([item for item in self.accounts if item['id'] != job['account_id']] + [account(job['platform'], 1)])
+        self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), self.at.date().isoformat())
+        current = self.store.job(job['id'])
+        self.assertEqual(current['account_id'], job['platform'] + '-1')
+        for key in ('persona', 'persona_version', 'delivery_generated', 'delivery_metadata'):
+            self.assertNotIn(key, current['payload'])
+        self.assertEqual(current['payload']['generated'], {'caption': 'Kucing.'})
+        self.assertEqual(current['counts_quota'], 1)
+
+    def test_unavailable_then_reconnected_account_keeps_pinned_caption_across_reopen(self):
+        job = self.ready()
+        metadata = self.prepared_caption(job)
+        self.sync([item for item in self.accounts if item['type'] != job['platform']])
+        self.assertIsNone(self.store.ensure_slot(job['id'], self.at.date()))
+        waiting = self.store.job(job['id'])
+        self.assertIsNone(waiting['account_id'])
+        self.assertEqual(waiting['counts_quota'], 0)
+        self.assertEqual(waiting['payload']['delivery_metadata'], metadata)
+        self.assertNotIn('delivery_generated', waiting['payload'])
+        self.store = Store(self.store.path)
+        self.assertIsNone(self.store.ensure_slot(job['id'], self.at.date()))
+        self.assertEqual(self.store.job(job['id'])['payload']['delivery_metadata'], metadata)
+        self.sync()
+        self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), self.at.date().isoformat())
+        current = self.store.job(job['id'])
+        self.assertEqual(current['account_id'], metadata['account_id'])
+        self.assertEqual(current['payload']['delivery_metadata'], metadata)
+        self.assertEqual(current['counts_quota'], 1)
+
+    def test_unavailable_then_different_account_discards_old_pinned_caption(self):
+        job = self.ready()
+        self.prepared_caption(job)
+        others = [item for item in self.accounts if item['type'] != job['platform']]
+        self.sync(others)
+        self.assertIsNone(self.store.ensure_slot(job['id'], self.at.date()))
+        self.sync(others + [account(job['platform'], 1)])
+        self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), self.at.date().isoformat())
+        current = self.store.job(job['id'])
+        self.assertEqual(current['account_id'], job['platform'] + '-1')
+        self.assertNotIn('delivery_metadata', current['payload'])
+
+    def test_submission_intent_preserves_slot_caption_and_account_even_if_unavailable(self):
+        job = self.ready()
+        self.prepared_caption(job)
+        self.store.begin_submission(job['id'], self.body(job), self.store.snapshot_generation())
+        self.store.checkpoint(job['id'], 'drive_ready')
+        self.at = parse_time(job['planned_at']).astimezone(ZONE) + timedelta(days=1)
+        self.sync([item for item in self.accounts if item['type'] != job['platform']])
+        before = self.store.job(job['id'])
+        self.assertEqual(self.store.ensure_slot(job['id'], self.at.date()), job['slot_date'])
+        self.assertEqual(self.store.job(job['id']), before)
+
     def test_unavailable_platform_does_not_take_other_platform_account(self):
         self.sync([account('tiktok'), account('facebook')])
         self.enqueue()
