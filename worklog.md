@@ -401,3 +401,14 @@ Pengguna memberi docs/cf.md berisi token tunnel. Token disimpan lokal di Credent
 
 
 Review akhir juga menemukan race antara monitor berkala dan callback webhook. Monitor sekarang membaca ulang job setelah GET, callback untuk published bersifat idempoten, dan checkpoint monitor memakai guard published dalam transaksi. Respons error yang terlambat tidak boleh menurunkan publikasi yang sudah dibuktikan. Suite gabungan sebelum tambahan ini lulus 569 tes; angka final mengikuti laporan verifier berikutnya.
+
+
+### Pemasangan dan bukti akhir kode latensi
+
+572/572 tes PASS tanpa skip pada verifier worktree `verify-20261021T040244082622Z` dan verifier gabungan main `verify-20261021T040602071053Z`. Commit kode `4a2b3d14e5a6dd2559cd3c5e3878f90b7752814a` dipush ke branch; CI [39541965377](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39541965377) success pada SHA tepat. Main bersih dan selaras origin, digabung ff-only, diverifikasi penuh, dipush, lalu CI [39542238861](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39542238861) success; SHA remote cocok. Tidak force-push.
+
+Kontrol dicatat lalu dipause, backup bundle `873d1723c3a84a3ca8c15e4ecf995062` lulus, layanan dihentikan dan worker.lock terbukti lepas. Migrasi lokasi memakai SQLite backup, barrier penulis, integrity/FK dan fingerprint semua tabel. DB dipindah ke internal, sumber diarsipkan dan path lama menjadi tombstone; tidak ada DB operasional kedua atau symlink. Jumlah 1.505 jobs, 607 assets, 583 batches, 2.271 comment events, 427 reply attempts, 19 report parts tetap sama saat migrasi. Schema v3 aktif; backup bundle sesudahnya `0455c082aadc4d41a34d3da844f533ca` lulus.
+
+Hanya layanan `id.fahra.automation.social` direstart. Startup PID12528 siap 21 Oktober 11:09:35 WIB, snapshot lengkap. Reply di-resume melalui CLI, lalu paused/report dikembalikan ke kondisi sebelum deployment: false/true/true. Pemeriksaan awal tidak menemukan event failure baru sejak resume. HTTPS produksi lulus 401/200 dengan token berbeda yang dibaca dari Credential. Event testing diterima lokal; Save endpoint di akun Repliz masih menunggu langkah pengguna. Pengisian token baru tidak dilakukan lewat Computer Use karena aturan tool mengharuskan pengguna menangani perubahan kredensial. Tidak ada posting/reply/pesan Telegram percobaan; operasi normal dilanjutkan pada antrean milik pengguna.
+
+Seluruh evidence worktree disalin ke runtime/verification/latency-implementation-20261021/worktree-verification/, ditambah bukti CI, verifier main, fingerprint relokasi, backup, endpoint dan health. Penutupan dokumentasi dan cleanup worktree dicatat dalam final-git.json; arsip sumber DB tetap disimpan untuk menjaga referensi cleanup. Bukti awal ini belum menjadi ukuran SLA lima menit atau distribusi latensi kohort produksi baru.

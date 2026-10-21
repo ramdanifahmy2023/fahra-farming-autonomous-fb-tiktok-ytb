@@ -1,6 +1,6 @@
 # Implementasi perbaikan latensi, 21 Oktober 2026
 
-Perubahan pada branch `work/20261021-latency-implementation`, base `4b648b1`, menindaklanjuti [audit latensi](LATENCY_AUDIT_20261021.md). Kode tersedia di worktree terpisah. Tes fixture dan preview terbatas sudah memberi bukti fungsi; belum ada hasil pengukuran antrean produksi sesudah deployment pada laporan ini.
+Perubahan pada branch `work/20261021-latency-implementation`, base `4b648b1`, menindaklanjuti [audit latensi](LATENCY_AUDIT_20261021.md). Kode dikembangkan di worktree terpisah, lulus 572 tes penuh, lalu dipasang dari commit `4a2b3d1`. CI branch/main pada SHA yang sama lulus. Belum ada pengukuran kohort antrean produksi sesudah deployment pada laporan ini.
 
 Waktu input sampai siap kirim, waktu menerima jadwal, waktu jadwal tayang, dan waktu published terdeteksi tetap dihitung terpisah. Perubahan ini tidak menambah kuota provider atau menjamin tiga platform terbit bersamaan.
 
@@ -58,10 +58,17 @@ Pemeriksaan ruang kosong mencakup volume DB, runtime media, bank, dan downloader
 
 ## Bukti yang masih harus ditutup
 
-Verifikasi gabungan akhir, CI pada SHA tepat, merge ff-only, push main, relokasi produksi, aktivasi webhook akun, dan deployment belum dinyatakan selesai oleh laporan ini. Root mencatat penutupannya di worklog dan manifest runtime. Verifier penuh tetap wajib:
+Verifikasi gabungan 572 tes, CI pada SHA tepat, merge ff-only, push main, relokasi DB, dan startup produksi sudah lulus. Aktivasi endpoint/token pada akun Repliz masih menunggu Save oleh pengguna. Penutupan tercatat di worklog dan manifest runtime. Verifier penuh yang dipakai:
 
 ```sh
 ./scripts/verify.sh --mode full --base origin/main --secrets-from PATH_CREDENTIAL
 ```
 
 Preview nyata di atas sudah memeriksa jalur persona dan Drive yang berubah. Ia belum menguji batch media baru dari input sampai published, gangguan jaringan produksi berkepanjangan, atau distribusi waktu setelah deployment. Setelah aktivasi yang terkontrol, bandingkan antrean ringan dan batch dengan timestamp Telegram, penerimaan durable, tiap tahap, alasan menunggu, intent, jadwal diterima, waktu jadwal, published terverifikasi, dan notifikasi. Target lima menit pada audit tetap sasaran pengukuran untuk kondisi yang dijelaskan di sana, bukan hasil yang sudah tercapai.
+
+
+## Pemasangan produksi
+
+Commit `4a2b3d14e5a6dd2559cd3c5e3878f90b7752814a` lulus [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39541965377) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39542238861). Main digabung ff-only, diverifikasi penuh lagi, dan SHA remote cocok. Backup bundle sebelum/sesudah relokasi lulus. Fingerprint semua tabel sumber dan tujuan cocok; 1.505 jobs, 607 assets, 583 batches, 2.271 comment events, 427 reply attempts, dan 19 report parts tidak berubah oleh relokasi.
+
+DB aktif berada pada penyimpanan internal melalui pointer; schema v3 aktif. Runtime media, bank, jurnal, ownership, dan lock mempertahankan lokasi operasional sebelumnya. Startup siap pada 11:09:35 WIB, PID 12528. Kontrol dikembalikan ke paused=false, reply/report aktif. Pemeriksaan awal menunjukkan snapshot segar dan tidak ada event failure baru sejak resume. Uji endpoint produksi menghasilkan 401/200. Ini belum menjadi bukti bahwa Repliz sudah mengirim event nyata atau bahwa durasi input-ke-published sudah memenuhi target audit.
