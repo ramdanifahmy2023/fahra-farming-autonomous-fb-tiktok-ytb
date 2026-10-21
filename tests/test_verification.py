@@ -173,6 +173,15 @@ class VerificationTest(unittest.TestCase):
         self.assertNotIn(secret, redact('response ' + secret, {secret}))
         self.assertEqual(path.read_text(), 'api key=' + secret)
 
+    def test_plain_webhook_and_tunnel_tokens_are_redacted(self):
+        for name in ('repliz-webhook-token.txt', 'cloudflared-tunnel-token.txt'):
+            value = 'fixture-token-without-prefix-' + name + '-only'
+            path = self.write('Credential/' + name, value + '\n')
+            secrets = known_secrets([path.parent])
+            self.assertIn(value, secrets)
+            self.assertTrue(secret_issues('notes.md', value, secrets))
+            self.assertNotIn(value, redact(value, secrets))
+
     def test_forced_credential_file_and_outside_symlink_are_rejected(self):
         self.write('Credential/access.md', 'fixture')
         self.git('add', '-f', 'Credential/access.md')

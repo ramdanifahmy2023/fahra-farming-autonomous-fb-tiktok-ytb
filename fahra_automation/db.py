@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 import os
+import re
 import secrets
 import sqlite3
 import uuid
@@ -29,7 +32,8 @@ class Connection(sqlite3.Connection):
 
 
 class Store:
-    def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600, readonly=False):
+    def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600, readonly=False,
+                 provider_limit_cooldown_seconds=21600, schedule_lead_seconds=60):
         if type(daily_limit) is not int or not 1 <= daily_limit <= 20:
             raise ValueError('Batas video harus antara satu dan 20 per akun/hari.')
         if not (type(window_start) is int and type(window_end) is int and 0 <= window_start < window_end <= 24):
@@ -37,10 +41,16 @@ class Store:
         self.path = Path(path)
         self.daily_limit, self.window_start, self.window_end = daily_limit, window_start, window_end
         self.snapshot_ttl = snapshot_ttl
+        if type(schedule_lead_seconds) is not int or not 30 <= schedule_lead_seconds <= 3600:
+            raise ValueError('Jarak aman jadwal harus 30 sampai 3600 detik.')
+        self.schedule_lead_seconds = schedule_lead_seconds
+        if type(provider_limit_cooldown_seconds) is not int or not 60 <= provider_limit_cooldown_seconds <= 604800:
+            raise ValueError('Jeda batas provider harus 60 sampai 604800 detik.')
+        self.provider_limit_cooldown_seconds = provider_limit_cooldown_seconds
         self.readonly = readonly
         if readonly:
             with self.connect() as c:
-                if c.execute('PRAGMA user_version').fetchone()[0] not in {1, SCHEMA_VERSION}:
+                if c.execute('PRAGMA user_version').fetchone()[0] not in {1, 2, SCHEMA_VERSION}:
                     raise ValueError('Database belum diinisialisasi atau versi tidak didukung.')
             return
         path = self.path
@@ -48,7 +58,7 @@ class Store:
         with self.connect() as c:
             existing = {r["name"] for r in c.execute("PRAGMA table_info(jobs)")}
             version = c.execute('PRAGMA user_version').fetchone()[0]
-            if existing and version not in {1, SCHEMA_VERSION}:
+            if existing and version not in {1, 2, SCHEMA_VERSION}:
                 raise ValueError('Database workflow lama/versi lain harus melalui importer, bukan dibuka langsung.')
             c.executescript(f"""
                 PRAGMA journal_mode=DELETE;
@@ -161,6 +171,22 @@ class Store:
                 samples=samples+1,total_ms=total_ms+excluded.last_ms,max_ms=max(max_ms,excluded.last_ms),
                 last_ms=excluded.last_ms,updated_at=excluded.updated_at""",
                       (name, milliseconds, milliseconds, milliseconds, iso()))
+
+    def timings_batch(self, samples):
+        rows = []
+        for name, sample in samples.items():
+            count = sample['samples']
+            values = [sample[key] for key in ('total_ms', 'max_ms', 'last_ms')]
+            if (not isinstance(name, str) or not name or len(name) > 120
+                    or type(count) is not int or count < 1
+                    or any(type(value) not in {int, float} or not math.isfinite(value) or value < 0 for value in values)):
+                raise ValueError('Agregat timing tidak valid.')
+            rows.append((name, count, *values, iso()))
+        if rows:
+            with self.tx() as c:
+                c.executemany('''INSERT INTO timings VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
+                    samples=samples+excluded.samples,total_ms=total_ms+excluded.total_ms,
+                    max_ms=max(max_ms,excluded.max_ms),last_ms=excluded.last_ms,updated_at=excluded.updated_at''', rows)
 
     def capability(self, account_id, operation, state, evidence, reason=''):
         with self.tx() as c:
@@ -321,7 +347,9 @@ class Store:
             AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL
             AND account_id IN (SELECT id FROM accounts WHERE connected=0 OR eligible=0)''', (iso(), iso())).rowcount
         if any(changes.values()):
-            c.execute("UPDATE jobs SET next_attempt=? WHERE status='drive_ready'", (iso(),))
+            c.execute('''UPDATE jobs SET next_attempt=?,payload=json_set(payload,'$.allocation_recheck',1)
+                WHERE status='drive_ready' AND schedule_id IS NULL
+                AND json_extract(payload,'$.submission') IS NULL''', (iso(),))
             c.execute('UPDATE batch_progress SET done=0')
             self.event(c, 'account_pool_changed', **changes, reservations_released=released)
         self.event(c, 'accounts_synced', count=sum(a['connected'] for a in after.values()))
@@ -348,17 +376,21 @@ class Store:
     def defer_account(self, account_id, until, error=''):
         stamp = iso(parse_time(until))
         with self.tx() as c:
-            old = c.execute('SELECT blocked_until FROM accounts WHERE id=?', (account_id,)).fetchone()
-            if not old:
-                raise ValueError('Akun tidak ditemukan.')
-            if old['blocked_until'] and old['blocked_until'] > stamp:
-                stamp = old['blocked_until']
-            c.execute('UPDATE accounts SET blocked_until=?,block_reason=?,updated_at=? WHERE id=?',
-                      (stamp, safe_error(error), iso(), account_id))
-            c.execute('''UPDATE jobs SET next_attempt=max(next_attempt,?) WHERE account_id=?
-                AND status='drive_ready' AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL''',
-                      (stamp, account_id))
-            self.event(c, 'account_deferred', account_id=account_id, until=stamp, error=safe_error(error))
+            return self._defer_account(c, account_id, stamp, error)
+
+    def _defer_account(self, c, account_id, stamp, error):
+        old = c.execute('SELECT blocked_until FROM accounts WHERE id=?', (account_id,)).fetchone()
+        if not old:
+            raise ValueError('Akun tidak ditemukan.')
+        if old['blocked_until'] and old['blocked_until'] > stamp:
+            stamp = old['blocked_until']
+        c.execute('UPDATE accounts SET blocked_until=?,block_reason=?,updated_at=? WHERE id=?',
+                  (stamp, safe_error(error), iso(), account_id))
+        c.execute('''UPDATE jobs SET next_attempt=max(next_attempt,?) WHERE account_id=?
+            AND status='drive_ready' AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL''',
+                  (stamp, account_id))
+        self.event(c, 'account_deferred', account_id=account_id, until=stamp, error=safe_error(error))
+        return stamp
 
     @staticmethod
     def _remote_account(schedule):
@@ -433,6 +465,8 @@ class Store:
             self.put_setting(c, 'sync_last_success_at', iso())
             self.put_setting(c, 'sync_error', None)
             self.put_setting(c, 'sync_in_progress', False)
+            self._wake_dependency(c, 'snapshot')
+            self._wake_dependency(c, 'capacity')
             return {**changes, 'generation': generation}
 
     def sync_external(self, schedules, from_day, to_day):
@@ -443,21 +477,32 @@ class Store:
             self.put_setting(c, 'snapshot_to_day', to_day)
             self.put_setting(c, 'repliz_synced_at', iso())
             self.put_setting(c, 'sync_in_progress', False)
+            self._wake_dependency(c, 'snapshot')
 
     @staticmethod
     def loads(c, day, platform=None):
-        result = {}
-        for a in c.execute("SELECT * FROM accounts WHERE connected=1 AND eligible=1 ORDER BY ordinal"):
-            if platform and a["platform"] != platform:
-                continue
-            local = c.execute("SELECT count(*) FROM jobs WHERE account_id=? AND slot_date=? AND counts_quota=1",
-                              (a["id"], day)).fetchone()[0]
-            external = c.execute("""SELECT count(*) FROM external_schedules e WHERE account_id=? AND slot_date=?
+        where = "a.connected=1 AND a.eligible=1" + (" AND a.platform=?" if platform else "")
+        params = (platform,) if platform else ()
+        accounts = c.execute('SELECT a.* FROM accounts a WHERE ' + where + ' ORDER BY a.ordinal', params).fetchall()
+        local = dict(c.execute('''SELECT j.account_id,count(*) FROM accounts a JOIN jobs j ON j.account_id=a.id
+            WHERE ''' + where + ' AND j.slot_date=? AND j.counts_quota=1 GROUP BY j.account_id', (*params, day)))
+        external = dict(c.execute('''SELECT e.account_id,count(*) FROM accounts a
+            JOIN external_schedules e ON e.account_id=a.id WHERE ''' + where + ''' AND e.slot_date=?
                 AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.schedule_id=e.id OR j.id=e.job_id)
-                    AND j.account_id=e.account_id AND j.slot_date=e.slot_date AND j.counts_quota=1)""",
-                (a["id"], day)).fetchone()[0]
-            result[a["id"]] = (dict(a), local + external)
-        return result
+                    AND j.account_id=e.account_id AND j.slot_date=e.slot_date AND j.counts_quota=1)
+                GROUP BY e.account_id''', (*params, day)))
+        return {a['id']: (dict(a), local.get(a['id'], 0) + external.get(a['id'], 0)) for a in accounts}
+
+    @staticmethod
+    def _occupied_slots(c, day, platform):
+        occupied = {}
+        for table, column, extra in (('jobs', 'planned_at', ' AND j.counts_quota=1'),
+                                     ('external_schedules', 'scheduled_at', '')):
+            for row in c.execute(f'''SELECT j.account_id,j.{column} AS stamp FROM {table} j
+                JOIN accounts a ON a.id=j.account_id WHERE a.platform=? AND j.slot_date=?
+                AND j.{column} IS NOT NULL''' + extra, (platform, day)):
+                occupied.setdefault(row['account_id'], set()).add(row['stamp'])
+        return occupied
 
     def allocate(self, c, job_id, start_day):
         if not self._snapshot_fresh(c):
@@ -467,11 +512,16 @@ class Store:
             return False
         platform = job["platform"]
         day = start_day
+        from_day = self.setting(c, 'snapshot_from_day', '')
+        to_day = self.setting(c, 'snapshot_to_day', '')
         for _ in range(366):
-            if not (self.setting(c, 'snapshot_from_day', '') <= day.isoformat() <= self.setting(c, 'snapshot_to_day', '')):
+            if not (from_day <= day.isoformat() <= to_day):
                 return False
             loads = self.loads(c, day.isoformat(), platform)
-            eligible = [(a, count, self._available_time(c, a, day)) for a, count in loads.values() if count < self.daily_limit]
+            candidates = [(a, count) for a, count in loads.values() if count < self.daily_limit]
+            occupied = self._occupied_slots(c, day.isoformat(), platform) if candidates else {}
+            eligible = [(a, count, self._available_time(c, a, day, occupied=occupied.get(a['id'], set())))
+                        for a, count in candidates]
             eligible = [(a, count, stamp) for a, count, stamp in eligible if stamp is not None]
             if not loads:
                 return False
@@ -480,7 +530,7 @@ class Store:
                 cursor = self.setting(c, "cursor:" + platform, 0)
                 maximum = c.execute("SELECT max(ordinal)+1 FROM accounts").fetchone()[0]
                 a, _, stamp = min((v for v in eligible if v[1] == minimum),
-                                  key=lambda v: (v[0]['ordinal'] - cursor) % maximum)
+                                  key=lambda v: (v[2], (v[0]['ordinal'] - cursor) % maximum))
                 c.execute('''UPDATE jobs SET account_id=?,slot_date=?,planned_at=?,snapshot_generation=?,counts_quota=1 WHERE id=?''',
                           (a['id'], day.isoformat(), iso(stamp), self.setting(c, 'snapshot_generation'), job_id))
                 self.put_setting(c, "cursor:" + platform, (a["ordinal"] + 1) % maximum)
@@ -489,12 +539,13 @@ class Store:
             day += timedelta(days=1)
         raise RuntimeError("Antrean melampaui kapasitas satu tahun.")
 
-    def _available_time(self, c, account, day, ignore_job=None):
-        occupied = {r[0] for r in c.execute('''SELECT planned_at FROM jobs WHERE account_id=? AND slot_date=?
-            AND counts_quota=1 AND id!=? AND planned_at IS NOT NULL''', (account['id'], day.isoformat(), ignore_job or ''))}
-        occupied.update(r[0] for r in c.execute('SELECT scheduled_at FROM external_schedules WHERE account_id=? AND slot_date=?',
-                                               (account['id'], day.isoformat())) if r[0])
-        earliest = now() + timedelta(seconds=60)
+    def _available_time(self, c, account, day, ignore_job=None, *, occupied=None):
+        if occupied is None:
+            occupied = {r[0] for r in c.execute('''SELECT planned_at FROM jobs WHERE account_id=? AND slot_date=?
+                AND counts_quota=1 AND id!=? AND planned_at IS NOT NULL''', (account['id'], day.isoformat(), ignore_job or ''))}
+            occupied.update(r[0] for r in c.execute('SELECT scheduled_at FROM external_schedules WHERE account_id=? AND slot_date=?',
+                                                   (account['id'], day.isoformat())) if r[0])
+        earliest = now() + timedelta(seconds=self.schedule_lead_seconds)
         if account.get('blocked_until'):
             earliest = max(earliest, parse_time(account['blocked_until']))
         for stamp in daily_slots(day, self.daily_limit, account['slot_offset'], self.window_start, self.window_end):
@@ -503,17 +554,19 @@ class Store:
         return None
 
     def enqueue(self, chat_id, user_id, message_id, urls, start_day=None, can_allocate=True, progress=False, invalid=0,
-                required_destinations=None):
+                required_destinations=None, received_at=None):
         destinations = tuple(PLATFORMS if required_destinations is None else required_destinations)
         if not destinations or len(set(destinations)) != len(destinations) or set(destinations) - set(PLATFORMS):
             raise ValueError('Tujuan wajib media tidak valid.')
         day = start_day or now().astimezone(ZONE).date()
+        received = iso(parse_time(received_at)) if received_at is not None else None
         with self.tx() as c:
             old = c.execute("SELECT id FROM batches WHERE chat_id=? AND message_id=?", (chat_id, message_id)).fetchone()
             if old:
                 return {"batch_id": old[0], "replayed": True, "accepted": 0, "duplicates": 0}
             batch_id = uuid.uuid4().hex
             c.execute("INSERT INTO batches VALUES(?,?,?,?,?)", (batch_id, chat_id, user_id, message_id, iso()))
+            self.event(c, 'batch_received', batch_id=batch_id, received_at=received, persisted_at=iso())
             c.execute('INSERT INTO batch_routes VALUES(?,?)',
                       (batch_id, user_id if chat_id < 0 and user_id > 0 else chat_id))
             accepted = duplicates = 0
@@ -589,13 +642,73 @@ class Store:
             self.event(c, 'asset_failed' if terminal else 'asset_retry_waiting', asset_id=asset_id,
                        stage=asset['status'], attempt=attempts, kind_code=kind, error=message)
 
-    def defer_asset(self, asset_id, reason, seconds=60):
+    @staticmethod
+    def _validate_dependency(dependency):
+        if dependency not in {'snapshot', 'drive', 'capacity'}:
+            raise ValueError('Dependency antrean tidak dikenal.')
+
+    def _defer_rows(self, c, rows, reason, seconds, dependency):
+        if dependency is not None:
+            self._validate_dependency(dependency)
+        if type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError('Waktu tunggu tidak valid.')
+        ready = dependency == 'snapshot' and self._snapshot_fresh(c)
+        retry_at = iso(now() + timedelta(seconds=0 if ready else seconds))
+        for row in rows:
+            c.execute('UPDATE jobs SET next_attempt=?,leased=0,last_error=? WHERE id=?',
+                      (retry_at, safe_error(reason), row['id']))
+            c.execute('UPDATE assets SET leased_job_id=NULL WHERE leased_job_id=?', (row['id'],))
+            if dependency and not ready:
+                c.execute('''INSERT INTO job_waits VALUES(?,?,?,?) ON CONFLICT(job_id)
+                    DO UPDATE SET dependency=excluded.dependency,reason=excluded.reason,created_at=excluded.created_at''',
+                          (row['id'], dependency, safe_error(reason), iso()))
+            else:
+                c.execute('DELETE FROM job_waits WHERE job_id=?', (row['id'],))
+        return len(rows)
+
+    def defer_asset(self, asset_id, reason, seconds=60, dependency=None):
         with self.tx() as c:
-            c.execute('UPDATE assets SET leased_job_id=NULL WHERE id=?', (asset_id,))
-            c.execute("""UPDATE jobs SET next_attempt=?,leased=0,last_error=? WHERE asset_id=?
+            rows = c.execute("""SELECT id FROM jobs WHERE asset_id=?
                 AND status IN ('queued','downloaded','analyzed','rendered')
-                AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL""",
-                (iso(now() + timedelta(seconds=seconds)), safe_error(reason), asset_id))
+                AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL""", (asset_id,)).fetchall()
+            return self._defer_rows(c, rows, reason, seconds, dependency)
+
+    def defer_dependency(self, job_id, reason, dependency='snapshot', seconds=60):
+        self._validate_dependency(dependency)
+        with self.tx() as c:
+            job = c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+            if (not job or job['status'] not in PREPARE or job['schedule_id']
+                    or json.loads(job['payload']).get('submission')):
+                return 0
+            if job['status'] == 'drive_ready':
+                rows = [job]
+            else:
+                rows = c.execute("""SELECT id FROM jobs WHERE asset_id=?
+                    AND status IN ('queued','downloaded','analyzed','rendered')
+                    AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL""", (job['asset_id'],)).fetchall()
+            return self._defer_rows(c, rows, reason, seconds, dependency)
+
+    def _wake_dependency(self, c, dependency):
+        if dependency == 'snapshot' and not self._snapshot_fresh(c):
+            return 0
+        rows = c.execute("""SELECT j.id,j.status,a.blocked_until FROM job_waits w JOIN jobs j ON j.id=w.job_id
+            LEFT JOIN accounts a ON a.id=j.account_id WHERE w.dependency=? AND j.leased=0
+            AND j.status IN ('queued','downloaded','analyzed','rendered','drive_ready')
+            AND j.schedule_id IS NULL AND json_extract(j.payload,'$.submission') IS NULL""", (dependency,)).fetchall()
+        for row in rows:
+            ready_at = iso()
+            if row['status'] == 'drive_ready' and row['blocked_until']:
+                ready_at = max(ready_at, row['blocked_until'])
+            c.execute('UPDATE jobs SET next_attempt=?,last_error=NULL WHERE id=?', (ready_at, row['id']))
+            c.execute('DELETE FROM job_waits WHERE job_id=?', (row['id'],))
+        if rows:
+            self.event(c, 'dependency_ready', dependency=dependency, jobs=len(rows))
+        return len(rows)
+
+    def wake_dependency(self, dependency):
+        self._validate_dependency(dependency)
+        with self.tx() as c:
+            return self._wake_dependency(c, dependency)
 
     def asset_checkpoint(self, asset_id, status=None, payload=None):
         with self.tx() as c:
@@ -682,7 +795,17 @@ class Store:
             rows = c.execute("SELECT * FROM jobs WHERE id LIKE ? LIMIT 2", (prefix + "%",)).fetchall()
         return self.decode(rows[0]) if len(rows) == 1 else None
 
-    def claim(self):
+    def claim(self, stage=None):
+        if stage not in {None, 'prepare', 'send'}:
+            raise ValueError('Tahap antrean tidak dikenal.')
+        stage_filter = ''
+        params = [iso(), iso()]
+        if stage == 'prepare':
+            stage_filter = " AND j.status!='drive_ready'"
+        elif stage == 'send':
+            stage_filter = ''' AND j.status='drive_ready' AND (j.slot_date IS NULL OR j.slot_date<=?
+                OR json_extract(j.payload,'$.allocation_recheck')=1)'''
+            params.append(now().astimezone(ZONE).date().isoformat())
         with self.tx() as c:
             if self.setting(c, "paused", False):
                 return None
@@ -691,12 +814,14 @@ class Store:
                 ('queued','downloaded','analyzed','rendered','drive_ready')
                 AND j.leased=0 AND j.next_attempt<=? AND
                 (j.status='drive_ready' OR a.leased_job_id IS NULL)
+                AND j.schedule_id IS NULL AND json_extract(j.payload,'$.submission') IS NULL
                 AND (j.status!='drive_ready' OR NOT EXISTS(SELECT 1 FROM accounts target
-                    WHERE target.id=j.account_id AND target.blocked_until>?))
-                ORDER BY coalesce(f.last_claimed,''),j.created_at,j.rowid LIMIT 1""", (iso(), iso())).fetchone()
+                    WHERE target.id=j.account_id AND target.blocked_until>?))""" + stage_filter + '''
+                ORDER BY coalesce(f.last_claimed,''),j.created_at,j.rowid LIMIT 1''', params).fetchone()
             if not row:
                 return None
             c.execute("UPDATE jobs SET leased=1 WHERE id=?", (row["id"],))
+            c.execute('DELETE FROM job_waits WHERE job_id=?', (row['id'],))
             c.execute('INSERT OR REPLACE INTO sender_fairness VALUES(?,?)', (row['sender'], iso()))
             if row['status'] != 'drive_ready':
                 c.execute('UPDATE assets SET leased_job_id=? WHERE id=?', (row['id'], row['asset_id']))
@@ -712,16 +837,18 @@ class Store:
             a = c.execute("SELECT * FROM accounts WHERE id=?", (job["account_id"],)).fetchone()
             valid = (a and a['connected'] and a['eligible'] and a['platform'] == job['platform']
                      and job['slot_date'] and job['slot_date'] >= day.isoformat()
-                     and job['planned_at'] and parse_time(job['planned_at']) >= now() + timedelta(seconds=60))
+                     and job['planned_at'] and parse_time(job['planned_at']) >= now() + timedelta(seconds=self.schedule_lead_seconds))
             if valid and job["slot_date"] > day.isoformat():
                 valid = not any(n < self.daily_limit and self._available_time(c, other, day) is not None
                                 for other, n in self.loads(c, day.isoformat(), job['platform']).values())
             if valid:
                 valid = self.loads(c, job["slot_date"])[job["account_id"]][1] <= self.daily_limit
             if valid:
-                c.execute('UPDATE jobs SET snapshot_generation=? WHERE id=?', (self.setting(c, 'snapshot_generation'), job_id))
+                c.execute("UPDATE jobs SET snapshot_generation=?,payload=json_remove(payload,'$.allocation_recheck') WHERE id=?",
+                          (self.setting(c, 'snapshot_generation'), job_id))
                 return job["slot_date"]
             payload = json.loads(job['payload'])
+            payload.pop('allocation_recheck', None)
             metadata = payload.get('delivery_metadata')
             origin = metadata.get('account_id') if isinstance(metadata, dict) else None
             if not isinstance(origin, str) or not origin:
@@ -736,13 +863,14 @@ class Store:
             if assigned['account_id']:
                 if assigned['account_id'] != (origin or job['account_id']):
                     payload.pop('delivery_metadata', None)
+                    payload.pop('delivery_candidate', None)
             elif not origin:
                 payload.pop('delivery_metadata', None)
             if payload != json.loads(job['payload']):
                 c.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(payload, ensure_ascii=False), job_id))
             return assigned['slot_date'] if allocated else None
 
-    def checkpoint(self, job_id, status=None, payload=None, **updates):
+    def checkpoint(self, job_id, status=None, payload=None, *, preserve_published=False, **updates):
         allowed = {"attempts", "next_attempt", "last_error", "schedule_id", "counts_quota", "leased", "slot_date", "planned_at"}
         if set(updates) - allowed:
             raise ValueError("Unknown job column")
@@ -750,6 +878,8 @@ class Store:
             old = c.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
             if not old:
                 raise ValueError("Unknown job")
+            if preserve_published and old['status'] == 'published':
+                return False
             values = {"updated_at": iso(), **updates}
             if status is not None:
                 values["status"] = status
@@ -761,6 +891,7 @@ class Store:
             if updates.get('leased') == 0:
                 c.execute('UPDATE assets SET leased_job_id=NULL WHERE leased_job_id=?', (job_id,))
             if status in {'submit_unknown', 'scheduled', 'published', 'failed'}:
+                c.execute('DELETE FROM job_waits WHERE job_id=?', (job_id,))
                 c.execute('''UPDATE submission_attempts SET status=?,updated_at=? WHERE job_id=?
                     AND id=(SELECT max(id) FROM submission_attempts WHERE job_id=?)''', (status, iso(), job_id, job_id))
             c.execute("UPDATE batch_progress SET done=0 WHERE batch_id=?", (old["batch_id"],))
@@ -795,8 +926,8 @@ class Store:
                 raise ConfigurationError('Tanggal tujuan berada di luar snapshot kuota.')
             stamp = parse_time(body.get('scheduleAt'))
             if (stamp != parse_time(job['planned_at']) or stamp.astimezone(ZONE).date().isoformat() != job['slot_date']
-                    or stamp <= now()):
-                raise ConfigurationError('Waktu jadwal tidak cocok atau sudah lewat.')
+                    or stamp < now() + timedelta(seconds=self.schedule_lead_seconds)):
+                raise ConfigurationError('Waktu jadwal tidak cocok atau terlalu dekat.', dependency='slot')
             if self.loads(c, job['slot_date'], job['platform'])[job['account_id']][1] > self.daily_limit:
                 raise ConfigurationError('Kuota berubah sebelum intent.')
             if self.setting(c, 'paused', False):
@@ -839,7 +970,7 @@ class Store:
                 raise ConfigurationError('Akun sedang menunggu batas provider.')
             if (not job['counts_quota'] or not job['planned_at']
                     or parse_time(job['planned_at']) != parse_time(body.get('scheduleAt'))
-                    or parse_time(job['planned_at']) <= now()
+                    or parse_time(job['planned_at']) < now() + timedelta(seconds=self.schedule_lead_seconds)
                     or not self.setting(c, 'snapshot_from_day', '') <= job['slot_date'] <= self.setting(c, 'snapshot_to_day', '')
                     or self.loads(c, job['slot_date'], job['platform'])[account['id']][1] > self.daily_limit):
                 raise ConfigurationError('Jadwal atau kuota berubah sebelum pengiriman.')
@@ -858,6 +989,35 @@ class Store:
             self.event(c, 'submission_rejected', job_id)
             return True
 
+    def _record_provider_limit(self, c, job, sid, error, payload):
+        normalized = ' '.join(error.casefold().split())
+        known = (re.search(r'(?<![a-z])uploadlimitexceeded(?![a-z])', normalized)
+                 or 'user has exceeded the number of videos they may upload' in normalized)
+        if job['platform'] != 'youtube' or not known:
+            return
+        error_hash = hashlib.sha256(normalized.encode()).hexdigest()
+        prior = c.execute('SELECT * FROM provider_limits WHERE schedule_id=? AND error_hash=?',
+                          (sid, error_hash)).fetchone()
+        if prior:
+            first, until = prior['first_seen'], prior['blocked_until']
+        else:
+            observed = now()
+            if job['status'] == 'failed':
+                failed = c.execute("""SELECT min(at) FROM events WHERE job_id=? AND kind='status_changed'
+                    AND json_extract(detail,'$.status')='failed'""", (job['id'],)).fetchone()[0]
+                historical = failed or payload.get('submitted_at') or job['planned_at'] or job['created_at']
+                observed = min(observed, parse_time(historical))
+            first = iso(observed)
+            until = iso(observed + timedelta(seconds=self.provider_limit_cooldown_seconds))
+            c.execute('INSERT INTO provider_limits VALUES(?,?,?,?,?,?)',
+                      (sid, error_hash, job['account_id'], 'provider_upload_limit', first, until))
+            if until > iso():
+                self._defer_account(c, job['account_id'], until, 'Batas unggahan YouTube: ' + error)
+            self.event(c, 'provider_limit_observed', job['id'], schedule_id=sid,
+                       category='provider_upload_limit', first_seen=first, blocked_until=until)
+        payload.update(failure_category='provider_upload_limit', provider_limit_first_seen=first,
+                       provider_limit_until=until)
+
     def _record_remote(self, c, job, schedule):
         sid = schedule.get('id', schedule.get('_id')) or job['schedule_id']
         if self._remote_account(schedule) != job['account_id'] or not sid or (job['schedule_id'] and job['schedule_id'] != sid):
@@ -870,8 +1030,11 @@ class Store:
                   (day, iso(stamp), sid, iso(), job['id']))
         if schedule['status'] == 'error' and job['status'] != 'published':
             payload = json.loads(job['payload'])
-            payload.update(failure_kind='provider', next_poll=iso(now() + timedelta(minutes=15)))
+            payload['failure_kind'] = 'provider'
+            if job['status'] != 'failed' or not payload.get('next_poll'):
+                payload['next_poll'] = iso(now() + timedelta(minutes=15))
             error = safe_error(schedule.get('errorMessage') or job['last_error'] or 'Provider melaporkan kiriman gagal.')
+            self._record_provider_limit(c, job, sid, error, payload)
             c.execute("UPDATE jobs SET status='failed',last_error=?,payload=?,leased=0 WHERE id=?",
                       (error, json.dumps(payload, ensure_ascii=False), job['id']))
             c.execute('UPDATE assets SET leased_job_id=NULL WHERE leased_job_id=?', (job['id'],))
@@ -900,12 +1063,30 @@ class Store:
                        schedule['status'], job_id, sid))
             return self.decode(c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
 
-    def pending_publications(self):
+    def pending_publications(self, limit=10):
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('Batas monitor tidak valid.')
         with self.connect() as c:
-            return [self.decode(r) for r in c.execute("""SELECT * FROM jobs WHERE
+            due = """
                 (status IN ('submitting','submit_unknown','scheduled') OR (status='failed' AND schedule_id IS NOT NULL))
-                AND coalesce(json_extract(payload,'$.next_poll'),'')<=?
-                ORDER BY coalesce(json_extract(payload,'$.next_poll'),''),updated_at LIMIT 10""", (iso(),))]
+                AND coalesce(json_extract(payload,'$.next_poll'),'')<=?"""
+            near = iso(now() + timedelta(minutes=5))
+            priority = """CASE WHEN status IN ('submitting','submit_unknown') THEN 0
+                WHEN status='scheduled' AND (planned_at IS NULL OR planned_at<=?) THEN 1 ELSE 2 END"""
+            rows = c.execute('SELECT *, ' + priority + ' AS monitor_priority FROM jobs WHERE ' + due + '''
+                ORDER BY monitor_priority,coalesce(json_extract(payload,'$.next_poll'),''),updated_at,rowid LIMIT ?''',
+                (near, iso(), limit)).fetchall()
+            if limit > 1 and len(rows) == limit and all(row['monitor_priority'] < 2 for row in rows):
+                background = c.execute('SELECT *, ' + priority + ' AS monitor_priority FROM jobs WHERE ' + due + '''
+                    AND (status='failed' OR (status='scheduled' AND planned_at>?))
+                    ORDER BY coalesce(json_extract(payload,'$.next_poll'),''),updated_at,rowid LIMIT 1''',
+                    (near, iso(), near)).fetchone()
+                if background:
+                    rows[-1] = background
+            result = [self.decode(row) for row in rows]
+            for job in result:
+                job.pop('monitor_priority', None)
+            return result
 
     def duplicate_hash(self, job_id, digest):
         with self.connect() as c:

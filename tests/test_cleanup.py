@@ -15,6 +15,7 @@ import httpx
 from fahra_automation.cleanup import Cleaner, CleanupBlocked
 from fahra_automation.config import Config
 from fahra_automation.db import Store
+from fahra_automation.storage import migrate
 from fahra_automation.util import iso, now, process_lock
 
 
@@ -226,6 +227,65 @@ class CleanupTests(unittest.IsolatedAsyncioTestCase):
     def test_other_workspace_reference_keeps_all_files(self):
         self.add_reference(self.peer_store, self.source)
         self.assertEqual(self.states(), ['blocked'])
+        self.assert_kept()
+
+    def relocate(self, store, config, name):
+        store.set('paused', True)
+        store.set('reply_enabled', False)
+        store.set('account_report_enabled', False)
+        with patch.object(Config, 'require_production_checkout'):
+            result = migrate(config, self.base / 'internal' / name / 'workflow.sqlite3')
+        return Store(config.database_path), result
+
+    def test_relocated_active_database_is_read_and_archive_still_protects_media(self):
+        self.store, result = self.relocate(self.store, self.config, 'active')
+        self.cleaner.store = self.store
+        self.store.checkpoint(self.jobs[0]['id'], payload={'after_relocation': True})
+        roots, _, _ = self.cleaner.scope()
+        own, refs = self.cleaner.inventory(roots)
+        current = next(j for j in own['jobs'] if j['id'] == self.jobs[0]['id'])
+        self.assertTrue(current['payload']['after_relocation'])
+        source_refs = refs[str(self.source)]
+        self.assertTrue(any(db == str(self.store.path) for db, _, _ in source_refs))
+        self.assertTrue(any(db == result['archive'] for db, _, _ in source_refs))
+        group = self.cleaner.plan()['groups'][0]
+        self.assertEqual(group['state'], 'blocked')
+        self.assertIn('masih dirujuk', group['reason'])
+        self.assert_kept()
+
+    def test_relocated_peer_database_and_old_preview_still_protect_files(self):
+        peer_config = Config(self.peer, {'workflow': {'runtime_dir': 'runtime'}})
+        self.peer_store, _ = self.relocate(self.peer_store, peer_config, 'peer')
+        self.add_reference(self.peer_store, self.source)
+        preview = Store(self.peer / 'runtime/verification/preview.sqlite3')
+        self.add_reference(preview, self.render)
+        roots, _, _ = self.cleaner.scope()
+        _, refs = self.cleaner.inventory(roots)
+        self.assertTrue(any(db == str(self.peer_store.path) for db, _, _ in refs[str(self.source)]))
+        self.assertTrue(any(db == str(preview.path) for db, _, _ in refs[str(self.render)]))
+        self.assertEqual(self.states(), ['blocked'])
+        self.assert_kept()
+
+    def test_relocated_database_hardlink_or_missing_archive_fails_closed(self):
+        self.store, result = self.relocate(self.store, self.config, 'active')
+        self.cleaner.store = self.store
+        alias = self.base / 'same-database.sqlite3'
+        os.link(self.store.path, alias)
+        with self.assertRaises(CleanupBlocked):
+            self.cleaner.plan()
+        alias.unlink()
+        Path(result['archive']).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.cleaner.plan()
+        self.assert_kept()
+
+    def test_unproven_database_directory_cannot_be_skipped_as_tombstone(self):
+        self.store, _ = self.relocate(self.store, self.config, 'active')
+        self.cleaner.store = self.store
+        marker = self.root / 'runtime/workflow.sqlite3/MOVED.json'
+        marker.write_text(json.dumps({'migration_id': 'wrong', 'pointer': str(self.root / 'runtime/database-location.json')}))
+        with self.assertRaises(CleanupBlocked):
+            self.cleaner.plan()
         self.assert_kept()
 
     def test_other_job_and_archived_preview_reference_are_protected(self):

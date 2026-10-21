@@ -30,6 +30,8 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
             p = patch(target, side_effect=lambda: self.at); p.start(); self.addCleanup(p.stop)
         data = copy.deepcopy(Config.load().data)
         data['workflow'].update(runtime_dir='runtime', journal_dir='runtime/attempts', publish_enabled=True)
+        data['downloader']['project_dir'] = str(self.root / 'fixture-downloader')
+        data['drive']['sync_dir'] = str(self.root / 'fixture-bank')
         self.config = Config(self.root, data)
         self.config.require_live_action = Mock()
         self.store = Store(self.root / 'runtime/workflow.sqlite3')

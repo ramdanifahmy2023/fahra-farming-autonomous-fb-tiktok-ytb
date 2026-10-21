@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .config import EXCLUDED_ACCOUNT_ID
+from .config import Config, EXCLUDED_ACCOUNT_ID
 from .util import digest_file, iso, now, process_lock, safe_error
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
@@ -65,11 +65,9 @@ def regular_file(path, boundary):
     path, boundary = Path(path), Path(boundary)
     if not path.is_absolute() or '..' in path.parts or not path.is_relative_to(boundary):
         raise CleanupBlocked('Lokasi file di luar batas cleanup.')
-    current = path
-    while current != boundary.parent:
+    for current in (path, *path.parents):
         if current.is_symlink():
             raise CleanupBlocked('Symlink tidak boleh dipakai untuk cleanup.')
-        current = current.parent
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise CleanupBlocked('Cleanup hanya menerima file biasa tanpa hardlink.')
@@ -102,12 +100,13 @@ class Cleaner:
     def scope(self):
         cfg = self.settings()
         root = self.config.root.resolve()
-        if self.config.runtime.resolve() != root / 'runtime' or self.store.path.resolve() != root / 'runtime/workflow.sqlite3':
-            raise CleanupBlocked('Cleanup hanya untuk database operasional pada runtime proyek.')
+        if self.config.runtime.resolve() != root / 'runtime' or self.store.path.absolute() != self.config.database_path:
+            raise CleanupBlocked('Cleanup hanya untuk database operasional yang ditunjuk proyek.')
         peers = cfg.get('peer_roots', [])
         if not isinstance(peers, list) or not peers:
             raise CleanupBlocked('Daftar workspace lain wajib diatur untuk memeriksa pemakaian file bersama.')
         roots = [root]
+        configurations = {root: self.config}
         banks = [self.config.path(self.config.section('drive')['sync_dir']).absolute()]
         for value in peers:
             peer = Path(value)
@@ -126,8 +125,36 @@ class Cleaner:
                 raise CleanupBlocked('Runtime workspace lain tidak berada pada lokasi yang didukung.')
             banks.append((peer / settings['drive']['sync_dir']).absolute())
             roots.append(peer)
-        for path in roots:
-            regular_file(path / 'runtime/workflow.sqlite3', path)
+            configurations[peer] = Config(peer, settings)
+        self._database_scopes = {}
+        self._relocation_markers = set()
+        for path, configuration in configurations.items():
+            active = configuration.database_path
+            boundary = path if active.is_relative_to(path) else active.parent
+            regular_file(active, boundary)
+            self._database_scopes[active] = boundary
+            pointer = path / 'runtime/database-location.json'
+            if pointer.exists():
+                regular_file(pointer, path)
+                metadata = json.loads(pointer.read_text())
+                archive = metadata.get('source_archive')
+                if archive:
+                    archive = Path(archive)
+                    identity = metadata.get('migration_id', '')
+                    if not re.fullmatch(r'[0-9a-f]{32}', identity) or not archive.name.endswith('.before-move-' + identity):
+                        raise CleanupBlocked('Arsip relokasi database tidak cocok dengan pointer.')
+                    archive_boundary = path if archive.is_relative_to(path) else archive.parent
+                    regular_file(archive, archive_boundary)
+                    self._database_scopes[archive] = archive_boundary
+                previous = path / 'runtime/workflow.sqlite3'
+                if previous.is_dir():
+                    marker = previous / 'MOVED.json'
+                    regular_file(marker, path)
+                    moved = json.loads(marker.read_text())
+                    if (not metadata.get('migration_id') or moved.get('migration_id') != metadata['migration_id']
+                            or moved.get('pointer') != str(pointer)):
+                        raise CleanupBlocked('Penanda database lama tidak cocok dengan relokasi.')
+                    self._relocation_markers.add(previous)
         mcp = self.config.path(self.config.section('downloader')['project_dir']).resolve() / 'downloads/mcp'
         if not mcp.is_dir() or mcp.is_symlink():
             raise CleanupBlocked('Folder download MCP tidak tersedia.')
@@ -136,20 +163,26 @@ class Cleaner:
     def inventory(self, roots):
         references = defaultdict(set)
         own = None
+        databases = dict(self._database_scopes)
         for root in roots:
-            for db in sorted((root / 'runtime').rglob('*.sqlite3')):
+            candidates = list((root / 'runtime').rglob('*.sqlite3'))
+            candidates += list((root / 'runtime').rglob('*.sqlite3.before-move-*'))
+            for db in candidates:
                 if db.name.startswith('._'):
                     continue
-                regular_file(db, root)
-                snapshot = read_db(db, full=db == self.store.path.resolve())
-                if db == self.store.path.resolve():
-                    own = snapshot
-                for table in ('jobs', 'assets'):
-                    for row in snapshot[table]:
-                        for key in ('source_path', 'render_path', 'bank_path'):
-                            value = row['payload'].get(key)
-                            if value:
-                                references[str(Path(value).resolve())].add((str(db), table, row['id']))
+                if db not in self._relocation_markers:
+                    databases[db] = root
+        for db, boundary in sorted(databases.items()):
+            regular_file(db, boundary)
+            snapshot = read_db(db, full=db == self.store.path.resolve())
+            if db == self.store.path.resolve():
+                own = snapshot
+            for table in ('jobs', 'assets'):
+                for row in snapshot[table]:
+                    for key in ('source_path', 'render_path', 'bank_path'):
+                        value = row['payload'].get(key)
+                        if value:
+                            references[str(Path(value).resolve())].add((str(db), table, row['id']))
         if own is None or not own['jobs'] and own['assets']:
             raise CleanupBlocked('Database operasional tidak lengkap.')
         return own, references

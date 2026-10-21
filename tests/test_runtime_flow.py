@@ -201,7 +201,11 @@ class WaitingHealthTest(unittest.IsolatedAsyncioTestCase):
             self.store.set('reply_enabled',True)
             with patch.object(self.worker,method,AsyncMock(side_effect=ReplyWait('Snapshot sedang diperbarui.'))):
                 for _ in range(3):
-                    with patch('fahra_automation.replies.asyncio.sleep',AsyncMock(side_effect=asyncio.CancelledError())):
+                    async def stop_wait(awaitable, **kwargs):
+                        awaitable.close()
+                        raise asyncio.CancelledError()
+                    with patch('fahra_automation.replies.asyncio.sleep',AsyncMock(side_effect=asyncio.CancelledError())), \
+                            patch('fahra_automation.replies.asyncio.wait_for', side_effect=stop_wait):
                         with self.assertRaises(asyncio.CancelledError):
                             await getattr(self.worker,loop)()
             with self.store.connect() as c:

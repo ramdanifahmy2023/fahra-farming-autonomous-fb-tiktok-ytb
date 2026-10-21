@@ -1,11 +1,41 @@
 """Versioned additions to the operational database; legacy imports remain separate."""
 
-VERSION = 2
+VERSION = 3
 
 
 def upgrade(connection, version):
     if version == VERSION:
         return
+    if version not in {0, 1, 2}:
+        raise ValueError('Versi database belum didukung.')
+    if version < 2:
+        _upgrade_v2(connection, version)
+    connection.execute('BEGIN IMMEDIATE')
+    try:
+        connection.execute('CREATE INDEX IF NOT EXISTS external_account_day ON external_schedules(account_id,slot_date)')
+        connection.execute('CREATE INDEX IF NOT EXISTS events_job_kind_at ON events(job_id,kind,at)')
+        connection.execute('CREATE INDEX IF NOT EXISTS jobs_asset_state ON jobs(asset_id,status)')
+        connection.execute('CREATE INDEX IF NOT EXISTS jobs_account_schedule ON jobs(account_id,schedule_id)')
+        connection.execute("""CREATE INDEX IF NOT EXISTS jobs_published_account_post
+            ON jobs(account_id,json_extract(payload,'$.post_id')) WHERE status='published'""")
+        connection.execute('''CREATE TABLE IF NOT EXISTS job_waits(
+            job_id TEXT PRIMARY KEY REFERENCES jobs(id), dependency TEXT NOT NULL,
+            reason TEXT NOT NULL, created_at TEXT NOT NULL)''')
+        connection.execute('CREATE INDEX IF NOT EXISTS job_waits_dependency ON job_waits(dependency)')
+        connection.execute('''CREATE TABLE IF NOT EXISTS provider_limits(
+            schedule_id TEXT NOT NULL,error_hash TEXT NOT NULL,account_id TEXT NOT NULL,
+            category TEXT NOT NULL,first_seen TEXT NOT NULL,blocked_until TEXT NOT NULL,
+            PRIMARY KEY(schedule_id,error_hash))''')
+        connection.execute("""INSERT OR IGNORE INTO schema_migrations
+            VALUES(3,strftime('%Y-%m-%dT%H:%M:%fZ','now'))""")
+        connection.execute('PRAGMA user_version=3')
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
+
+
+def _upgrade_v2(connection, version):
     if version not in {0, 1}:
         raise ValueError('Versi database belum didukung.')
     connection.execute('BEGIN IMMEDIATE')

@@ -24,7 +24,7 @@ def record(store, component, state, *, reason='', duration_ms=None, details=None
             from .telegram_views import human_error
             names = {'account_sync': 'Pembaruan data akun', 'reply_poll': 'Pemeriksaan komentar',
                      'reply_profiles': 'Pengaturan balasan', 'reply_worker': 'Balasan komentar',
-                     'media_worker': 'Persiapan video', 'publication_monitor': 'Pemeriksaan hasil kirim',
+                     'media_worker': 'Persiapan video', 'delivery_worker': 'Pengiriman video', 'publication_monitor': 'Pemeriksaan hasil kirim',
                      'telegram_poll': 'Penerimaan pesan', 'telegram_outbox': 'Pembaruan pesan',
                      'backup': 'Pencadangan data', 'cleanup': 'Pembersihan file kerja'}
             store.event(c, 'health_alert', component=component, reason=reason)
@@ -44,7 +44,7 @@ def report(store):
             row['age_seconds'] = round((now() - datetime.fromisoformat(row['checked_at'])).total_seconds())
             row['stale'] = row['age_seconds'] > (7200 if row['component'] in {'backup', 'cleanup'} else 900)
             row['details'] = json.loads(row['details'])
-        expected = {'media_worker','publication_monitor','account_sync','telegram_poll','telegram_outbox',
+        expected = {'media_worker','delivery_worker','publication_monitor','account_sync','telegram_poll','telegram_outbox',
                     'reply_poll','reply_worker','reply_profiles','backup','cleanup'}
         loops.extend({'component': name, 'state': 'unknown', 'stale': True,
                       'reason': 'Belum ada heartbeat dari versi ini.'}

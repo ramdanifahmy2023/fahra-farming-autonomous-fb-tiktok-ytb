@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack
+from collections import deque
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+import math
 import re
 import time
 import weakref
@@ -13,9 +16,23 @@ import httpx
 from .config import ConfigurationError, EXCLUDED_ACCOUNT_ID, PLATFORMS, allowed_account
 from .db import ZONE
 from .util import iso, now, safe_error
+from .telemetry import record_timing, flush as flush_timings
 
 SCHEDULE_STATUSES = {'pending', 'process', 'success', 'error'}
 SCHEDULE_TYPES = {'video', 'reel', 'image', 'carousel', 'text', 'story', 'link'}
+API_CLASSES = ('publish', 'sync', 'reply', 'monitor', 'background')
+_api_class = ContextVar('repliz_api_class', default='background')
+
+
+@contextmanager
+def api_scope(priority):
+    if priority not in API_CLASSES:
+        raise ValueError('Kelas prioritas API tidak dikenal.')
+    token = _api_class.set(priority)
+    try:
+        yield
+    finally:
+        _api_class.reset(token)
 
 
 def account_id(value):
@@ -77,9 +94,49 @@ class SharedRateLimiter:
     def __init__(self, interval=.65):
         self.interval = interval
         self.lock = asyncio.Lock()
-        self.slots = asyncio.Semaphore(2)
-        self.mutations = asyncio.Lock()
         self.next_at = 0.0
+        self.queues = {name: deque() for name in API_CLASSES}
+        self.cycle = ('publish', 'sync', 'publish', 'sync', 'reply', 'monitor', 'publish', 'sync', 'reply', 'background')
+        self.cursor = 0
+        self.active = 0
+        self.mutation_active = False
+
+    def dispatch(self):
+        while self.active < 2:
+            selected = None
+            for _ in self.cycle:
+                name = self.cycle[self.cursor]
+                self.cursor = (self.cursor + 1) % len(self.cycle)
+                queue = self.queues[name]
+                selected = next((item for item in queue if not item['future'].done()
+                                 and not (item['mutation'] and self.mutation_active)), None)
+                if selected is not None:
+                    queue.remove(selected)
+                    break
+            if selected is None:
+                return
+            selected['granted'] = True
+            self.active += 1
+            if selected['mutation']:
+                self.mutation_active = True
+            selected['future'].set_result(None)
+
+    @asynccontextmanager
+    async def acquire(self, priority, mutation=False):
+        item = {'future': asyncio.get_running_loop().create_future(), 'mutation': mutation, 'granted': False}
+        self.queues[priority].append(item)
+        self.dispatch()
+        try:
+            await item['future']
+            yield
+        finally:
+            if item['granted']:
+                self.active -= 1
+                if mutation:
+                    self.mutation_active = False
+            else:
+                self.queues[priority].remove(item)
+            self.dispatch()
 
     @classmethod
     def shared(cls, key, interval=.65):
@@ -117,14 +174,12 @@ class Repliz:
             cfg = self.config.section('repliz')
             self.limiter = SharedRateLimiter.shared(cfg['base_url'], cfg.get('min_request_interval_seconds', .65))
         waiting = time.monotonic()
-        async with AsyncExitStack() as gates:
-            if mutation:
-                await gates.enter_async_context(self.limiter.mutations)
-            await gates.enter_async_context(self.limiter.slots)
+        scope = _api_class.get()
+        async with self.limiter.acquire(scope, mutation):
             async with self.limiter.lock:
                 await self.limiter.wait()
-            if self.observer is not None:
-                self.observer.timing('repliz.limiter', (time.monotonic()-waiting)*1000)
+            record_timing(self.observer, 'repliz.limiter', (time.monotonic()-waiting)*1000)
+            record_timing(self.observer, 'repliz.' + scope + '.wait', (time.monotonic()-waiting)*1000)
             if mutation:
                 try:
                     self.config.require_live_action()
@@ -136,11 +191,13 @@ class Repliz:
             try:
                 response = await self.client.request(method, path, **kwargs)
             finally:
-                if self.observer is not None:
-                    self.observer.timing('repliz.' + method, (time.monotonic()-started)*1000)
+                elapsed = (time.monotonic()-started)*1000
+                record_timing(self.observer, 'repliz.' + method, elapsed)
+                record_timing(self.observer, 'repliz.' + scope + '.' + method, elapsed)
             if response.status_code == 429:
                 try:
-                    retry_after = max(1, min(86400, float(response.headers.get('retry-after', '60'))))
+                    value = float(response.headers.get('retry-after', '60'))
+                    retry_after = max(1, min(86400, value)) if math.isfinite(value) else 60
                 except ValueError:
                     retry_after = 60
                 self.limiter.defer(retry_after)
@@ -208,6 +265,44 @@ class Repliz:
                 raise ValueError('Halaman Repliz berulang atau kosong sebelum akhir.')
         raise ValueError('Pagination Repliz melampaui batas.')
 
+    async def comment_inbox(self, account_ids, *, status='pending', max_pages=20, start_page=1):
+        """Collect changing inbox pages without presenting them as a quota snapshot."""
+        if (status not in {'pending', 'resolved', 'ignored'} or type(max_pages) is not int or not 2 <= max_pages <= 200
+                or type(start_page) is not int or not 1 <= start_page <= 100000):
+            raise ValueError('Filter/batas inbox komentar tidak valid.')
+        ids = set(account_ids)
+        if not ids or EXCLUDED_ACCOUNT_ID in ids:
+            raise ValueError('Akun inbox kosong/dikecualikan.')
+        rows = {}
+        numbers = ([1] + list(range(start_page, start_page + max_pages - 1)) if start_page > 1
+                   else range(1, max_pages + 1))
+        requested = 0
+        for page in numbers:
+            requested += 1
+            query = [('page', str(page)), ('limit', '100'), ('status', status)]
+            query.extend((f'accountIds[{i}]', aid) for i, aid in enumerate(sorted(ids)))
+            result = await self.request('GET', '/public/comment', params=query)
+            data = result.get('data', result)
+            if (not isinstance(data, dict) or not isinstance(data.get('docs'), list)
+                    or type(data.get('hasNextPage')) is not bool or type(data.get('page')) is not int
+                    or data['page'] != page or type(data.get('totalDocs')) is not int or data['totalDocs'] < 0):
+                raise ValueError('Halaman inbox komentar tidak valid.')
+            if 'nextPage' in data and data['nextPage'] != (page + 1 if data['hasNextPage'] else None):
+                raise ValueError('Nomor halaman lanjutan inbox tidak valid.')
+            previous = len(rows)
+            for row in data['docs']:
+                identity = row.get('id', row.get('_id')) if isinstance(row, dict) else None
+                if (not isinstance(identity, str) or not identity or row.get('accountId') not in ids
+                        or row.get('status') not in {'pending', 'resolved', 'ignored'}):
+                    raise ValueError('Identitas/akun/status inbox tidak valid.')
+                rows[identity] = row
+            if not data['hasNextPage']:
+                return {'rows': list(rows.values()), 'exhausted': True, 'pages': requested, 'next_page': 1}
+            if len(rows) == previous:
+                break
+        return {'rows': list(rows.values()), 'exhausted': False, 'pages': requested,
+                'next_page': min(100000, page + 1)}
+
     @staticmethod
     def validate_schedules(rows, ids):
         seen = set()
@@ -222,8 +317,9 @@ class Repliz:
 
     async def sync(self, store):
         generation = store.begin_sync()
-        async with asyncio.timeout(self.config.section('workflow').get('sync_timeout_seconds', 120)):
-            return await self.collect_snapshot(store, generation)
+        with api_scope('sync'):
+            async with asyncio.timeout(self.config.section('workflow').get('sync_timeout_seconds', 120)):
+                return await self.collect_snapshot(store, generation)
 
     async def collect_snapshot(self, store, generation):
         all_accounts = await self.pages('/public/account')
@@ -236,13 +332,22 @@ class Repliz:
         ids = sorted(ids)
         start = now().astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
         end = start + timedelta(days=367)
-        schedules = []
-        for offset in range(0, len(ids), 30):
-            batch_ids = ids[offset:offset + 30]
-            batch = await self.pages('/public/schedule', {
-                'accountIds': batch_ids, 'fromDate': iso(start), 'toDate': iso(end)})
-            self.validate_schedules(batch, set(batch_ids))
-            schedules.extend(batch)
+        gate = asyncio.Semaphore(max(1, min(2, self.config.section('repliz').get('sync_concurrency', 2))))
+        async def collect(batch_ids):
+            async with gate:
+                batch = await self.pages('/public/schedule', {
+                    'accountIds': batch_ids, 'fromDate': iso(start), 'toDate': iso(end)})
+                self.validate_schedules(batch, set(batch_ids))
+                return batch
+        tasks = [asyncio.create_task(collect(ids[offset:offset + 30])) for offset in range(0, len(ids), 30)]
+        try:
+            batches = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+        schedules = [row for batch in batches for row in batch]
         self.validate_schedules(schedules, set(ids))
         return store.apply_snapshot(accounts, schedules, start.date().isoformat(), end.date().isoformat(),
                                     expected_generation=generation)
@@ -363,4 +468,7 @@ class Repliz:
         return matches[0] if matches else None
 
     async def close(self):
-        await self.client.aclose()
+        try:
+            await flush_timings(self.observer)
+        finally:
+            await self.client.aclose()

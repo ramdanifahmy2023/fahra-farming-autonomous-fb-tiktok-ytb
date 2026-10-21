@@ -21,11 +21,12 @@ class ReplyEnrollmentTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = Store(Path(self.temp.name) / 'workflow.sqlite3')
+        self.runtime = Path(self.temp.name).resolve()
+        self.store = Store(self.runtime / 'workflow.sqlite3')
         self.db = ReplyStore(self.store)
         self.config = Config.load()
         self.config.data = copy.deepcopy(self.config.data)
-        self.config.data['workflow']['runtime_dir'] = self.temp.name
+        self.config.data['workflow']['runtime_dir'] = str(self.runtime)
         self.config.require_live_action = Mock()
         self.at = now()
         self.legacy_since = iso(self.at - timedelta(days=1))
@@ -205,6 +206,10 @@ class ReplyEnrollmentTest(unittest.TestCase):
         async def pages(path, params=None):
             return self.accounts if path == '/public/account' else rows
         self.api.pages.side_effect = pages
+        async def comment_inbox(account_ids, **kwargs):
+            return {'rows': [row for row in rows if row['accountId'] in account_ids],
+                    'exhausted': True, 'next_page': 1}
+        self.api.comment_inbox = AsyncMock(side_effect=comment_inbox)
         with patch('fahra_automation.reply_store.iso', return_value=self.later):
             asyncio.run(self.worker().ingest())
         with self.store.connect() as c:

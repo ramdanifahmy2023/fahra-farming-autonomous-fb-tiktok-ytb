@@ -272,7 +272,7 @@ class CommentProfileTest(unittest.IsolatedAsyncioTestCase):
         rows[0]['config']['delete']['status'] = 'error'
         rows[0]['config']['reply']['status'] = 'success'
         self.assertTrue((await self.manager.ensure_post(job))['verified'])
-        self.assertEqual([c.args[0] for c in self.api.request.call_args_list], ['GET', 'POST', 'GET'])
+        self.assertEqual([c.args[0] for c in self.api.request.call_args_list], ['GET', 'GET', 'POST', 'GET'])
         self.assertEqual(len(rows), 1)
 
     async def test_repliz_204_does_not_raise_json_error(self):

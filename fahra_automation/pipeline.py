@@ -10,7 +10,9 @@ from pathlib import Path
 from .config import ConfigurationError
 from .db import ZONE, AssetStore, PREPARE
 from .downloader import DownloadUncertain, DownloadFailed
-from .repliz import AccountUnavailable, MutationNotSent, ReplizError, account_id, publication_details, timestamp
+from .repliz import AccountUnavailable, MutationNotSent, ReplizError, account_id, publication_details, timestamp, api_scope
+from .telemetry import record_timing
+from .personas import PersonaService
 from .util import digest_file, iso, now, safe_error
 
 
@@ -27,6 +29,10 @@ class Pipeline:
             from .journal import AttemptJournal
             journal = AttemptJournal(config)
         self.personas, self.journal = personas, journal
+        self.work_available = asyncio.Event()
+
+    def notify_work(self):
+        self.work_available.set()
 
     def fresh_sync(self):
         return self.store.snapshot_fresh()
@@ -42,13 +48,38 @@ class Pipeline:
 
     def revalidate(self, job, generation):
         current = self.store.job(job['id'])
-        if (not self.fresh_sync() or self.store.snapshot_generation() != generation
-                or not current or current['status'] != 'drive_ready' or not current['leased']
+        if not self.fresh_sync() or self.store.snapshot_generation() != generation:
+            raise ConfigurationError('Data akun diperbarui; menunggu snapshot lengkap.', dependency='snapshot')
+        if (not current or current['status'] != 'drive_ready' or not current['leased']
                 or current.get('schedule_id') or current['payload'].get('submission')
                 or any(current.get(key) != job.get(key) for key in ('account_id', 'slot_date', 'planned_at'))):
             raise ConfigurationError('Akun, jadwal, lease, atau snapshot berubah; preflight akan diulang.')
+        if (PersonaService.evidence_hash(current['payload']) != PersonaService.evidence_hash(job['payload'])
+                or any(current['payload'].get(key) != job['payload'].get(key) for key in (
+                    'drive_url', 'drive_file_id', 'drive_root_id', 'drive_path_ids', 'drive_relative_path',
+                    'drive_verified_sha256', 'drive_verified_size', 'bank_path', 'render_probe',
+                    'source_attribution', 'delivery_metadata'))):
+            raise ConfigurationError('Bukti video atau metadata berubah; preflight perlu diulang.')
         self.require_pilot_source(current)
         return current
+
+    def require_slot_time(self, job):
+        if timestamp(job['planned_at']) < now() + timedelta(seconds=self.config.section('workflow')['schedule_lead_seconds']):
+            raise ConfigurationError('Slot jadwal terlalu dekat setelah preflight; alokasi akan diulang.', dependency='slot')
+
+    @staticmethod
+    def next_publication_poll(job, *, failed=False, exception=False):
+        if exception:
+            count = min(int(job['payload'].get('poll_failures', 0)), 9)
+            maximum = 300 if job['status'] in {'submitting', 'submit_unknown'} else 21600 if job['status'] == 'failed' else 1800
+            return iso(now() + timedelta(seconds=min(maximum, 90 * 2 ** count)))
+        if failed:
+            count = min(int(job['payload'].get('provider_poll_failures', 0)), 7)
+            return iso(now() + timedelta(seconds=min(21600, 900 * 2 ** count)))
+        if job.get('planned_at') and job.get('schedule_id'):
+            remaining = (timestamp(job['planned_at']) - now()).total_seconds()
+            return iso(now() + timedelta(seconds=max(30, min(1800, remaining - 90))))
+        return iso(now() + timedelta(seconds=90))
 
     def require_pilot_source(self, job):
         source_id = self.store.get('pilot_source_id')
@@ -66,13 +97,13 @@ class Pipeline:
             return
         self.require_pilot_source(job)
         if not self.fresh_sync():
-            raise ConfigurationError("Sinkronisasi akun dan kuota Repliz belum tersedia atau sudah kedaluwarsa.")
+            raise ConfigurationError("Sinkronisasi akun dan kuota Repliz belum tersedia atau sudah kedaluwarsa.", dependency='snapshot')
         self.config.require_live_action()
         when = now() + timedelta(seconds=self.config.section("workflow")["schedule_lead_seconds"])
         target_day = when.astimezone(ZONE).date()
         slot = self.store.ensure_slot(sid, target_day)
         if slot is None:
-            raise ConfigurationError(f"Belum ada akun {job['platform']} aktif. Tujuan ini menunggu sinkronisasi.")
+            raise ConfigurationError(f"Belum ada akun {job['platform']} aktif. Tujuan ini menunggu sinkronisasi.", dependency='capacity')
         if slot > target_day.isoformat():
             next_time = datetime.fromisoformat(slot).replace(tzinfo=ZONE)
             self.store.checkpoint(sid, next_attempt=iso(next_time), leased=0)
@@ -92,17 +123,18 @@ class Pipeline:
                 raise ConfigurationError('Akun menunggu bukti kemampuan posting baru.')
             if str(account.get('username') or '').strip() != self.store.account_username(job['account_id'], identity=True):
                 self.store.begin_sync()
-                raise ConfigurationError('Identitas akun berubah; menunggu snapshot lengkap berikutnya.')
+                raise ConfigurationError('Identitas akun berubah; menunggu snapshot lengkap berikutnya.', dependency='snapshot')
         self.revalidate(job, generation)
+        self.require_slot_time(job)
         metadata = await self.personas.prepare_delivery(job)
         self.revalidate(job, generation)
         self.store.checkpoint(sid, payload={'delivery_metadata': metadata})
         job = self.store.job(sid)
+        self.require_slot_time(job)
         verified = await self.drive.verify_delivery(job)
         job = self.revalidate(job, generation)
         when = timestamp(job['planned_at'])
-        if when < now() + timedelta(seconds=self.config.section('workflow')['schedule_lead_seconds']):
-            raise ConfigurationError('Slot jadwal terlalu dekat setelah preflight; alokasi akan diulang.')
+        self.require_slot_time(job)
         body = self.repliz.payload(job, when)
         self.config.require_live_action()
         self.store.checkpoint(sid, payload={'preflight_drive': verified, 'submission_marker': 'fa:' + sid})
@@ -147,11 +179,28 @@ class Pipeline:
             return
         self.journal.mark(sid, 'accepted', schedule_id=schedule_id)
         self.store.checkpoint(sid, "scheduled", schedule_id=schedule_id, attempts=0, last_error=None,
-                              leased=0, payload={"next_poll": iso(now() + timedelta(seconds=30))})
+                              leased=0, payload={"next_poll": self.next_publication_poll({**job, 'schedule_id': schedule_id})})
+
+    def require_free_space(self):
+        minimum = self.config.section('workflow').get('min_free_disk_gb', 10) * 1024**3
+        if minimum <= 0:
+            return
+        paths = [self.store.path.parent, self.config.runtime / 'media',
+                 self.config.path(self.config.section('drive')['sync_dir']),
+                 self.config.path(self.config.section('downloader')['project_dir']) / 'downloads/mcp']
+        checked = set()
+        for path in paths:
+            while not path.exists() and path != path.parent:
+                path = path.parent
+            device = path.stat().st_dev
+            if device in checked:
+                continue
+            checked.add(device)
+            if shutil.disk_usage(path).free < minimum:
+                raise ConfigurationError('Ruang disk media/bank/database kurang. Persiapan menunggu ruang tersedia.')
 
     async def prepare(self, delivery):
-        if shutil.disk_usage(self.store.path.parent).free < self.config.section('workflow').get('min_free_disk_gb', 10) * 1024**3:
-            raise ConfigurationError('Ruang disk kurang. Persiapan menunggu ruang tersedia.')
+        self.require_free_space()
         media_store = AssetStore(self.store)
         job = self.store.asset(delivery["asset_id"])
         sid, state = job["id"], job["status"]
@@ -196,7 +245,7 @@ class Pipeline:
         if type(hours) not in {int, float} or not math.isfinite(hours) or hours <= 0:
             raise ConfigurationError('Horizon media harus berupa jumlah jam positif.')
         if not self.fresh_sync():
-            raise ConfigurationError('Persiapan media menunggu snapshot akun dan kuota yang lengkap.')
+            raise ConfigurationError('Persiapan media menunggu snapshot akun dan kuota yang lengkap.', dependency='snapshot')
         at = now()
         day = (at + timedelta(seconds=self.config.section('workflow')['schedule_lead_seconds'])).astimezone(ZONE).date()
         for delivery in self.store.asset_deliveries(asset_id):
@@ -209,12 +258,13 @@ class Pipeline:
                     and delivery.get('planned_at') and at <= timestamp(delivery['planned_at']) <= at + timedelta(hours=hours)
                     and self.fresh_sync()):
                 return
-        raise ConfigurationError('URL tersimpan; download menunggu slot platform dalam horizon media.')
+        raise ConfigurationError('URL tersimpan; download menunggu slot platform dalam horizon media.', dependency='capacity')
 
     async def handle(self, job):
         started = time.monotonic()
         try:
-            await self.step(job)
+            with api_scope('publish' if job['status'] == 'drive_ready' else 'background'):
+                await self.step(job)
         except asyncio.CancelledError:
             self.store.checkpoint(job["id"], leased=0)
             raise
@@ -232,7 +282,12 @@ class Pipeline:
                                       next_attempt=iso(now()+timedelta(seconds=60)))
                 return
             if isinstance(exc, ConfigurationError):
-                if current['status'] in PREPARE - {'drive_ready'}:
+                if exc.dependency == 'slot':
+                    self.store.checkpoint(job['id'], leased=0, last_error=message, next_attempt=iso())
+                elif exc.dependency in {'snapshot', 'drive', 'capacity'}:
+                    self.store.defer_dependency(job['id'], message, dependency=exc.dependency,
+                                                seconds=15 if exc.dependency == 'drive' else 60)
+                elif current['status'] in PREPARE - {'drive_ready'}:
                     self.store.defer_asset(current['asset_id'], message)
                 else:
                     self.store.checkpoint(job["id"], leased=0, last_error=message, next_attempt=iso(now() + timedelta(seconds=60)))
@@ -258,11 +313,14 @@ class Pipeline:
                 self.store.checkpoint(job["id"], leased=0, attempts=attempts, last_error=message,
                                       next_attempt=iso(now() + timedelta(seconds=min(1800, 30 * 2 ** attempts))))
         finally:
-            self.store.timing('stage.' + job['status'], (time.monotonic()-started)*1000)
+            record_timing(self.store, 'stage.' + job['status'], (time.monotonic()-started)*1000)
+            self.notify_work()
 
     async def monitor(self, job_id=None):
         failures = []
         for job in ([self.store.job(job_id)] if job_id else self.store.pending_publications()):
+            if job and job['status'] == 'published':
+                continue
             if job_id and (not job or job['status'] not in {'failed','scheduled','submitting','submit_unknown'}):
                 raise ValueError('Kiriman ini tidak memerlukan rekonsiliasi.')
             if job_id and not job['schedule_id'] and not job['payload'].get('submission'):
@@ -270,13 +328,21 @@ class Pipeline:
             if not job_id and job["payload"].get("next_poll", "") > iso():
                 continue
             try:
-                self.store.checkpoint(job["id"], payload={"next_poll": iso(now() + timedelta(seconds=90))})
-                if not job["schedule_id"]:
-                    result = await self.repliz.reconcile(job)
-                    if not result:
-                        continue
-                else:
-                    result = await self.repliz.status(job["schedule_id"])
+                self.store.checkpoint(job["id"], preserve_published=True, payload={"next_poll": iso(now() + timedelta(seconds=90))})
+                with api_scope('background' if job['status'] == 'failed' else 'monitor'):
+                    if not job["schedule_id"]:
+                        result = await self.repliz.reconcile(job)
+                        if not result:
+                            continue
+                    else:
+                        result = await self.repliz.status(job["schedule_id"])
+                current = self.store.job(job['id'])
+                if current and current['status'] == 'published':
+                    continue
+                if (not current or current['account_id'] != job['account_id']
+                        or current['schedule_id'] not in (None, job['schedule_id'], result.get('id', result.get('_id')))):
+                    raise ValueError('Identitas kiriman berubah selama rekonsiliasi.')
+                job = current
                 if account_id(result) != job["account_id"]:
                     raise ValueError("Jadwal Repliz tidak cocok dengan akun kiriman.")
                 remote_id = result.get('id', result.get('_id'))
@@ -287,26 +353,34 @@ class Pipeline:
                 if self.journal.state(job['id']) is not None:
                     self.journal.mark(job['id'], 'accepted', schedule_id=remote_id)
                 self.store.apply_remote_schedule(job['id'], result)
+                self.store.checkpoint(job['id'], preserve_published=True, payload={'poll_failures': 0,
+                    'next_poll': self.next_publication_poll(job)})
                 if not job['schedule_id']:
-                    self.store.checkpoint(job['id'], 'scheduled', schedule_id=remote_id)
+                    self.store.checkpoint(job['id'], 'scheduled', preserve_published=True, schedule_id=remote_id)
                 status = result.get("status")
                 if status == "success":
                     details = publication_details(result, self.store.account_username(job["account_id"]), job["platform"])
                     if not details:
                         self.store.record('publication_evidence_waiting', job['id'])
                         continue
-                    self.store.checkpoint(job["id"], "published", payload=details, last_error=None, leased=0)
+                    self.store.checkpoint(job["id"], "published", preserve_published=True, payload=details, last_error=None, leased=0)
                 elif status == "error":
                     # Keep quota until an operator resolves the failed remote schedule; do not create another post.
-                    self.store.checkpoint(job["id"], "failed", leased=0,
-                                          payload={'next_poll': iso(now() + timedelta(minutes=15)), 'failure_kind': 'provider'},
+                    self.store.checkpoint(job["id"], "failed", preserve_published=True, leased=0,
+                                          payload={'next_poll': self.next_publication_poll(job, failed=True),
+                                                   'provider_poll_failures': job['payload'].get('provider_poll_failures', 0) + 1,
+                                                   'failure_kind': 'provider'},
                                           last_error=safe_error(result.get("errorMessage", "Repliz melaporkan error")))
             except Exception as exc:
                 failures.append(safe_error(exc))
+                self.store.checkpoint(job['id'], preserve_published=True, payload={
+                    'next_poll': self.next_publication_poll(job, exception=True),
+                    'poll_failures': job['payload'].get('poll_failures', 0) + 1})
                 self.store.record("publication_poll_failed", job["id"], error=safe_error(exc))
         await self.share_link_reports()
         self.store.batch_reports()
         self.store.health('publication_monitor', 'error' if failures else 'ok', reason='; '.join(failures))
+        return not failures
 
     async def share_link_reports(self):
         # Also recover published jobs whose notification was interrupted by a restart.
@@ -329,18 +403,24 @@ class Pipeline:
                 if job["payload"].get("share_last_error") != message:
                     self.store.record("publication_link_waiting", job["id"], error=message)
 
-    async def worker_loop(self):
+    async def worker_loop(self, stage=None, worker_id=0):
         while True:
-            job = self.store.claim()
+            job = self.store.claim(stage=stage)
             start = time.monotonic()
             if job:
                 await self.handle(job)
             else:
-                await asyncio.sleep(2)
+                try:
+                    await asyncio.wait_for(self.work_available.wait(), timeout=2)
+                except TimeoutError:
+                    pass
+                finally:
+                    self.work_available.clear()
             current = self.store.job(job['id']) if job else None
             state = ('error' if current['status'] == 'failed' else 'waiting') if current and current['last_error'] else 'ok'
-            self.store.health('media_worker', state, reason=current['last_error'] if current else '',
-                              duration_ms=(time.monotonic()-start)*1000, details={'job_id': job['id'] if job else None})
+            self.store.health('delivery_worker' if stage == 'send' else 'media_worker', state,
+                              reason=current['last_error'] if current else '', duration_ms=(time.monotonic()-start)*1000,
+                              details={'job_id': job['id'] if job else None, 'stage': stage, 'worker': worker_id})
 
     async def monitor_loop(self):
         while True:
@@ -353,6 +433,7 @@ class Pipeline:
             delay = self.config.section("workflow")["sync_interval_seconds"]
             try:
                 await self.repliz.sync(self.store)
+                self.notify_work()
                 self.store.health('account_sync', 'ok', duration_ms=(time.monotonic()-started)*1000)
             except Exception as exc:
                 self.store.record("repliz_sync_failed", error=safe_error(exc))

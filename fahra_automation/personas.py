@@ -103,12 +103,33 @@ class PersonaService:
         self.registry = PersonaRegistry(store)
         self.analyzer = analyzer or Analyzer(config, None)
 
+    @staticmethod
+    def evidence_hash(payload):
+        return digest({k: payload.get(k) for k in
+                       ('source_sha256', 'render_sha256', 'generated', 'caption_review', 'transcript')})
+
+    def save_candidate(self, job, metadata):
+        with self.store.tx() as connection:
+            row = connection.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()
+            if row is None:
+                return  # Preview callers may supply an unstored fixture delivery.
+            current = self.store.decode(row)
+            payload = current['payload']
+            if (current['status'] != 'drive_ready' or current.get('schedule_id')
+                    or payload.get('submission') or payload.get('delivery_metadata')
+                    or current['account_id'] != metadata['account_id']
+                    or current['platform'] != metadata['platform']
+                    or self.evidence_hash(payload) != metadata['evidence_hash']):
+                return
+            payload['delivery_candidate'] = metadata
+            connection.execute('UPDATE jobs SET payload=? WHERE id=?',
+                               (json.dumps(payload, ensure_ascii=False), job['id']))
+
     async def prepare_delivery(self, job):
         payload = job['payload']
         account_id, platform = job.get('account_id'), job.get('platform')
         binding = self.registry.bind(account_id, platform)
-        evidence_hash = digest({k: payload.get(k) for k in
-                                ('source_sha256', 'render_sha256', 'generated', 'caption_review', 'transcript')})
+        evidence_hash = self.evidence_hash(payload)
         old = payload.get('delivery_metadata')
         sent = bool(job.get('schedule_id') or payload.get('submission') or job.get('status') in
                     {'submitting', 'submit_unknown', 'scheduled', 'published'})
@@ -117,7 +138,14 @@ class PersonaService:
                 return old
         if sent:
             raise ValueError('Metadata delivery ber-intent tidak boleh diganti atau dipindahkan akun.')
+        candidate = payload.get('delivery_candidate')
+        if (isinstance(candidate, dict) and candidate.get('evidence_hash') == evidence_hash
+                and all(candidate.get(key) == binding[key] for key in
+                        ('account_id', 'platform', 'persona_id', 'persona_version', 'persona_hash'))):
+            return candidate
         folder = self.config.runtime / 'personas/deliveries' / job['id'] / evidence_hash[:16]
         generated = await self.analyzer.delivery_metadata(job, binding, folder)
-        return {**generated, **{k: v for k, v in binding.items() if k != 'profile'},
-                'persona_profile': binding['profile'], 'evidence_hash': evidence_hash, 'prepared_at': iso()}
+        metadata = {**generated, **{k: v for k, v in binding.items() if k != 'profile'},
+                    'persona_profile': binding['profile'], 'evidence_hash': evidence_hash, 'prepared_at': iso()}
+        self.save_candidate(job, metadata)
+        return metadata

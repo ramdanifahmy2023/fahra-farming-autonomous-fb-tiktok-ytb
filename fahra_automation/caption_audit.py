@@ -18,7 +18,7 @@ from .util import iso, safe_error
 async def audit(config, job_ids, folder):
     if folder.exists():
         raise ValueError("Gunakan folder audit baru agar bukti sebelumnya tidak tertimpa.")
-    database = config.runtime / "workflow.sqlite3"
+    database = config.database_path
     with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
         connection.row_factory = sqlite3.Row
         selected = []

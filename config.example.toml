@@ -10,6 +10,7 @@ schedule_lead_seconds = 60
 max_attempts = 4
 sync_interval_seconds = 300
 sync_timeout_seconds = 120
+prepare_workers = 2
 max_batch_links = 100
 max_pending_assets = 1000
 render_horizon_hours = 24
@@ -36,6 +37,7 @@ forbidden_token_files = ["/Volumes/DATA KERJA /Project Dev/Peternakan-akun/Crede
 [repliz]
 credentials_file = "Credential/repliz.md"
 base_url = "https://api.repliz.com"
+sync_concurrency = 2
 
 [downloader]
 project_dir = "/Users/fahra/Projects/instagram-downloader-mcp"
@@ -67,6 +69,9 @@ frame_count = 6
 daily_limit = 20
 max_age_hours = 48
 poll_seconds = 120
+poll_max_seconds = 300
+inbox_group_size = 10
+inbox_max_pages = 20
 
 [metrics]
 enabled = false
@@ -79,6 +84,16 @@ credentials_file = "Credential/google_drive_oauth.json"
 client_secrets_file = "Credential/google_oauth_client.json"
 folder_id = ""
 make_video_readable_by_link = true
+parallel_verifications = 2
+
+[webhook]
+enabled = false
+host = "127.0.0.1"
+port = 8769
+path = "/repliz/webhook"
+token_file = "Credential/repliz-webhook-token.txt"
+max_body_bytes = 65536
+request_timeout_seconds = 5
 
 [account_report]
 enabled = false

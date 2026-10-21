@@ -110,12 +110,36 @@ def account_snapshot(raw):
     return {k: raw[k] for k in ("id", "_id", "username", "type", "isConnected", "config", "updatedAt") if k in raw}
 
 
+class ProfileSweep:
+    """Copies are scoped to one audit sweep; a mutation invalidates that account."""
+    def __init__(self):
+        self.accounts = {}
+        self.automations = {}
+        self.versions = {}
+
+    async def account(self, api, identity):
+        if identity not in self.accounts:
+            body = await api.request('GET', '/public/account/' + identity)
+            self.accounts[identity] = copy.deepcopy(body.get('data', body))
+        return copy.deepcopy(self.accounts[identity])
+
+    async def overrides(self, api, identity):
+        if identity not in self.automations:
+            self.automations[identity] = copy.deepcopy(await api.pages('/public/automation', {'accountIds': [identity]}))
+        return copy.deepcopy(self.automations[identity])
+
+    def invalidate(self, identity):
+        self.accounts.pop(identity, None)
+        self.automations.pop(identity, None)
+
+
 class CommentProfiles:
     def __init__(self, api, profile, folder, config=None):
         self.api, self.profile, self.folder = api, profile, folder
         self.config = config or getattr(api, 'config', None)
         self.patch = patch_config(profile)
         self.journal = {"started_at": iso(), "profile": profile["name"], "results": []}
+        self.account_versions = {}
 
     def require_live(self):
         if self.config is None:
@@ -253,16 +277,23 @@ class CommentProfiles:
             raise RuntimeError("Sebagian konfigurasi tidak sesuai; lihat verification.json.")
         return report
 
-    async def ensure_post(self, job, *, before_mutation=None):
+    async def ensure_post(self, job, *, before_mutation=None, sweep=None):
         account_id, post_id = job['account_id'], job['payload'].get('post_id')
         if job['status'] != 'published' or not post_id:
             raise ValueError('Otomasi posting memerlukan published dan post_id terverifikasi.')
-        account = await self.api.request('GET', '/public/account/' + account_id)
+        if sweep is not None:
+            version = self.account_versions.get(account_id, 0)
+            if sweep.versions.get(account_id) != version:
+                sweep.invalidate(account_id)
+                sweep.versions[account_id] = version
+        account = (await sweep.account(self.api, account_id) if sweep else
+                   await self.api.request('GET', '/public/account/' + account_id))
         account = account.get('data', account)
         if not allowed_account(account) or object_id(account) != account_id or not account.get('isConnected'):
             raise ValueError('Akun posting tidak eligible.')
         async def matching():
-            rows = await self.api.pages('/public/automation', {'accountIds': [account_id]})
+            rows = (await sweep.overrides(self.api, account_id) if sweep else
+                    await self.api.pages('/public/automation', {'accountIds': [account_id]}))
             return [a for a in rows if a.get('accountId') == account_id and
                     str(a.get('contentId') or (a.get('detail') or {}).get('id')) == str(post_id)]
         rows = await matching()
@@ -276,6 +307,10 @@ class CommentProfiles:
             if journal and journal.state(action_id):
                 journal.mark(action_id, 'accepted', schedule_id=object_id(rows[0]))
             return {'verified': True, 'automation_id': object_id(rows[0]), 'owner': 'custom'}
+        if sweep is not None:
+            # Cached GETs never authorize a write or become a mutation's merge base.
+            sweep.invalidate(account_id)
+            return await self.ensure_post(job, before_mutation=before_mutation)
         if before_mutation is not None:
             before_mutation()
         self.require_live()
@@ -286,6 +321,7 @@ class CommentProfiles:
             if fresh.get('accountId') != account_id or canonical(fresh.get('config')) != canonical(current):
                 raise RuntimeError('Override berubah sebelum PUT; perlu audit ulang.')
             try:
+                self.account_versions[account_id] = self.account_versions.get(account_id, 0) + 1
                 await self.api.request('PUT', '/public/automation/' + identity,
                                        before_send=before_mutation, json={'config': wanted})
             except Exception as exc:
@@ -293,8 +329,16 @@ class CommentProfiles:
                 if isinstance(exc, MutationNotSent) or isinstance(exc, ReplizError) and exc.status == 429:
                     raise
         else:
+            fresh = await self.api.request('GET', '/public/account/' + account_id)
+            fresh = fresh.get('data', fresh)
+            if (not allowed_account(fresh) or object_id(fresh) != account_id or not fresh.get('isConnected')
+                    or canonical(fresh.get('config', {})) != canonical(account.get('config', {}))):
+                raise RuntimeError('Konfigurasi/identitas akun berubah sebelum create; perlu audit ulang.')
+            if before_mutation is not None:
+                before_mutation()
             journal.begin(action_id, {'account_id': account_id, 'content_id': post_id, 'config': wanted})
             try:
+                self.account_versions[account_id] = self.account_versions.get(account_id, 0) + 1
                 await self.api.request('POST', '/public/automation',
                                        before_send=before_mutation,
                                        json={'accountId': account_id, 'contentId': post_id, 'config': wanted})

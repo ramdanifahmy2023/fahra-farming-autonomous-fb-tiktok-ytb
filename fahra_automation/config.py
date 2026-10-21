@@ -13,7 +13,9 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigurationError(RuntimeError):
-    pass
+    def __init__(self, message, *, dependency=None):
+        super().__init__(message)
+        self.dependency = dependency
 
 
 def credential_pairs(path):
@@ -82,6 +84,26 @@ class Config:
         for key in ('daily_limit', 'max_age_hours', 'poll_seconds'):
             if type(data['reply'].get(key)) is not int or data['reply'][key] <= 0:
                 raise ConfigurationError(f'Konfigurasi reply.{key} harus bilangan positif.')
+        for section, key, default, minimum, maximum in (
+                ('workflow', 'prepare_workers', 2, 1, 2),
+                ('repliz', 'sync_concurrency', 2, 1, 2),
+                ('reply', 'poll_max_seconds', 300, 120, 3600),
+                ('reply', 'inbox_group_size', 10, 1, 30),
+                ('reply', 'inbox_max_pages', 20, 2, 100),
+                ('drive', 'parallel_verifications', 2, 1, 2)):
+            value = data[section].setdefault(key, default)
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ConfigurationError(f'Konfigurasi {section}.{key} harus {minimum}–{maximum}.')
+        if data['reply']['poll_max_seconds'] < data['reply']['poll_seconds']:
+            raise ConfigurationError('Batas jeda komentar tidak boleh lebih kecil dari jeda awal.')
+        hook = data.setdefault('webhook', {})
+        if type(hook.get('enabled', False)) is not bool:
+            raise ConfigurationError('Konfigurasi webhook.enabled harus boolean.')
+        if hook.get('enabled'):
+            if hook.get('host', '127.0.0.1') != '127.0.0.1':
+                raise ConfigurationError('Webhook harus menerima koneksi melalui reverse proxy loopback.')
+            if type(hook.get('port', 8769)) is not int or not 1024 <= hook.get('port', 8769) <= 65535:
+                raise ConfigurationError('Port webhook tidak valid.')
         if data['cleanup']['retention_hours'] < 24 or data['cleanup']['interval_seconds'] < 300:
             raise ConfigurationError('Cleanup memerlukan retensi 24 jam dan interval 300 detik atau lebih.')
         return config
@@ -96,6 +118,11 @@ class Config:
     @property
     def runtime(self):
         return self.path(self.data['workflow']['runtime_dir'])
+
+    @property
+    def database_path(self):
+        from .storage import database_path
+        return database_path(self)
 
     def telegram_token(self):
         path = self.path(self.data['telegram']['token_file'])

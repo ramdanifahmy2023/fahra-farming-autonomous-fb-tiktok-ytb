@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import shutil
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import time
 
 import httpx
@@ -139,8 +139,16 @@ class Telegram:
             elif self.admission_error(len(urls)):
                 answer = self.admission_error(len(urls))
             else:
+                received_at = None
+                if type(message.get('date')) is int:
+                    try:
+                        received_at = iso(datetime.fromtimestamp(message['date'], timezone.utc))
+                    except (OverflowError, OSError, ValueError):
+                        pass
                 result = self.store.enqueue(chat_id, user_id, message["message_id"], urls, can_allocate=bool(self.pipeline.fresh_sync()),
-                                            progress=True, invalid=len(invalid))
+                                            progress=True, invalid=len(invalid), received_at=received_at)
+                if hasattr(self.pipeline, 'notify_work'):
+                    self.pipeline.notify_work()
                 if not private:
                     self.store.notify(prefix + ':receipt', chat_id,
                         'Link sudah dicatat. Progres dan hasil dikirim lewat chat pribadi. Buka bot dan tekan Mulai jika belum terhubung.')

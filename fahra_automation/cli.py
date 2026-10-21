@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import httpx
@@ -41,8 +42,36 @@ def initialize(config):
     config.runtime.mkdir(parents=True, exist_ok=True)
     (config.runtime / "logs").mkdir(exist_ok=True)
     (config.root / "scripts/docker-for-mcp.py").chmod(0o755)
-    return Store(config.runtime / 'workflow.sqlite3', daily_limit=config.section('workflow')['daily_limit'],
-                 window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'])
+    return Store(config.database_path, daily_limit=config.section('workflow')['daily_limit'],
+                 window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'],
+                 schedule_lead_seconds=config.section('workflow')['schedule_lead_seconds'])
+
+
+async def start_webhook(config, store, pipeline, replies):
+    from .webhook import WebhookSettings, WebhookReceiver, WebhookWorker, load_webhook_token
+    from .webhook_store import WebhookInbox
+    from .config import EXCLUDED_ACCOUNT_ID
+    settings = WebhookSettings.from_config(config)
+    if not settings.enabled:
+        return None, None
+    token = load_webhook_token(config, settings)
+    inbox = await asyncio.to_thread(WebhookInbox, store)
+
+    async def reconcile_schedule(job_id):
+        job = store.job(job_id)
+        if not job or job.get('account_id') == EXCLUDED_ACCOUNT_ID:
+            raise ValueError('Webhook tidak cocok dengan kiriman yang dikelola.')
+        if not await pipeline.monitor(job_id):
+            raise RuntimeError('Hasil webhook menunggu pemeriksaan provider berikutnya.')
+
+    async def wake_comments(account_id, comment_id):
+        if account_id != EXCLUDED_ACCOUNT_ID:
+            replies.wake_poll(account_id)
+
+    worker = WebhookWorker(inbox, on_schedule=reconcile_schedule, on_comment=wake_comments)
+    receiver = WebhookReceiver(inbox, token, settings, on_accepted=worker.wake.set)
+    await receiver.start()
+    return receiver, worker
 
 
 def finish_startup(config, store, replies):
@@ -73,15 +102,19 @@ async def run(config, store):
         repliz = Repliz(config)
         repliz.observer = store
         telegram = None
+        drive = None
+        receiver = None
         try:
             config.require_live_action()
             store.invalidate_snapshot()
             store.set('startup_health', {'ready': False, 'at': iso(), 'phase': 'waiting_for_repliz'})
             media = Media(config)
-            pipeline = Pipeline(config, store, repliz, Downloader(config), media, Analyzer(config, media), Drive(config))
+            drive = Drive(config, pool_connections=True)
+            pipeline = Pipeline(config, store, repliz, Downloader(config), media, Analyzer(config, media), drive)
             telegram = Telegram(config, store, pipeline)
             cleaner = Cleaner(config, store)
             replies = ReplyWorker(config, store, repliz)
+            receiver, webhook_worker = await start_webhook(config, store, pipeline, replies)
             from .account_reports import AccountReports
             reports = AccountReports(config, store, repliz, telegram)
             telegram.reports = reports
@@ -105,21 +138,33 @@ async def run(config, store):
             async def operational_workers():
                 await wait_for_startup(config, store, repliz, replies)
                 async with asyncio.TaskGroup() as operations:
-                    for worker in (pipeline.worker_loop, pipeline.monitor_loop, pipeline.sync_loop,
+                    for index in range(config.section('workflow').get('prepare_workers', 2)):
+                        operations.create_task(pipeline.worker_loop('prepare', index))
+                    operations.create_task(pipeline.worker_loop('send'))
+                    if webhook_worker is not None:
+                        operations.create_task(webhook_worker.run())
+                    for worker in (pipeline.monitor_loop, pipeline.sync_loop,
                                    cleaner.loop, replies.polling_loop, replies.worker_loop, replies.profile_loop, metrics.loop):
                         operations.create_task(worker())
             print('Workflow berjalan. Status dan jejak tersimpan di SQLite.', flush=True)
             async with asyncio.TaskGroup() as group:
+                from .telemetry import loop as timing_loop
+                tasks.append(group.create_task(timing_loop(store)))
                 for task in (telegram.polling_loop, telegram.outbox_loop, reports.loop, backups, operational_workers):
                     tasks.append(group.create_task(task()))
                 await stop.wait()
                 for task in tasks:
                     task.cancel()
         finally:
-            store.record('process_stopped')
-            if telegram is not None:
-                await telegram.client.aclose()
-            await repliz.close()
+            async with AsyncExitStack() as closing:
+                closing.push_async_callback(repliz.close)
+                if telegram is not None:
+                    closing.push_async_callback(telegram.client.aclose)
+                closing.callback(store.record, 'process_stopped')
+                if drive is not None:
+                    closing.push_async_callback(drive.close)
+                if receiver is not None:
+                    closing.push_async_callback(receiver.close)
 
 
 async def doctor(config, store):
@@ -307,6 +352,9 @@ def main():
     p = sub.add_parser('delivery')
     p.add_argument('action', choices=['inspect','reconcile','resolve','retry-local'])
     p.add_argument('identity')
+    p = sub.add_parser('storage', help='Lokasi dan migrasi database operasional saat worker berhenti.')
+    p.add_argument('action', choices=['status', 'migrate'])
+    p.add_argument('destination', nargs='?', type=Path)
     p = sub.add_parser('restore')
     p.add_argument('folder', type=Path)
     p.add_argument('destination', type=Path)
@@ -325,6 +373,15 @@ def main():
         if args.command == 'service':
             service(config, args.action)
             return 0
+        if args.command == 'storage':
+            from . import storage
+            if args.action == 'migrate':
+                if args.destination is None:
+                    raise ValueError('File tujuan database wajib diberikan.')
+                output(storage.migrate(config, args.destination))
+            else:
+                output(storage.status(config))
+            return 0
         if args.command == 'restore':
             from .backup import restore
             output({'restored_shadow': str(restore(args.folder, args.destination))})
@@ -333,7 +390,7 @@ def main():
                     or args.command == 'cleanup' and not args.apply
                     or args.command == 'report' and args.action == 'status'
                     or args.command in {'reply','delivery'} and args.action in {'status','inspect'})
-        store = Store(config.runtime / 'workflow.sqlite3', readonly=True) if readonly else initialize(config)
+        store = Store(config.database_path, readonly=True) if readonly else initialize(config)
         if args.command == 'health':
             from .health import report
             output(report(store))

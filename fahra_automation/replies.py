@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
 import sqlite3
@@ -9,14 +10,14 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .comment_profiles import CommentProfiles, object_id, save
+from .comment_profiles import CommentProfiles, ProfileSweep, object_id, save
 from .config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID, allowed_account
 from .db import Store
 from .reply_ai import ReplyAI
 from .reply_store import ReplyStore, ReplyWait
 from .personas import PersonaRegistry
 from .journal import AttemptJournal
-from .repliz import Repliz, ReplizError, MutationNotSent
+from .repliz import Repliz, ReplizError, MutationNotSent, api_scope
 from .util import iso, now, safe_error
 
 
@@ -82,6 +83,17 @@ class ReplyWorker:
         self.accounts = {}
         self.inventory_generation = None
         self.profile_lock = asyncio.Lock()
+        self.empty_polls = 0
+        self.poll_wakeup = asyncio.Event()
+
+    def wake_poll(self, account_id=None):
+        if not self.store.get('reply_enabled', False):
+            return False
+        if account_id is not None and account_id not in self.store.get('reply_account_ids', []):
+            return False
+        self.empty_polls = 0
+        self.poll_wakeup.set()
+        return True
 
     def own_ids_for(self, account_id):
         aliases = self.store.get('reply_owner_aliases', {})
@@ -105,11 +117,51 @@ class ReplyWorker:
         if not self.store.get('reply_enabled', False):
             return
         since = timestamp(self.store.get('reply_since'))
-        await self.inventory()
+        generation = self.db.require_snapshot()
+        if self.inventory_generation != generation:
+            await self.inventory()
         generation = self.inventory_generation
         if not self.accounts:
             raise ValueError('Tidak ada akun reply yang terhubung/diizinkan.')
-        rows = await self.api.pages('/public/comment', {'accountIds': list(self.accounts)})
+        cfg = self.config.section('reply')
+        group_size = max(1, min(30, cfg.get('inbox_group_size', 10)))
+        max_pages = max(2, min(200, cfg.get('inbox_max_pages', 20)))
+        page_positions = self.store.get('reply_inbox_pages', {})
+        next_positions, rows, exhausted = {}, [], True
+        ids = sorted(self.accounts)
+        for offset in range(0, len(ids), group_size):
+            group = ids[offset:offset + group_size]
+            key = hashlib.sha256('\n'.join(group).encode()).hexdigest()
+            if hasattr(self.api, 'comment_inbox'):
+                batch = await self.api.comment_inbox(group, max_pages=max_pages,
+                                                    start_page=page_positions.get(key, 1))
+                rows.extend(batch['rows'])
+                exhausted = exhausted and batch['exhausted']
+                next_positions[key] = batch['next_page']
+            else:
+                rows.extend(row for row in await self.api.pages('/public/comment', {'accountIds': group, 'status': 'pending'})
+                            if row.get('accountId') in group)
+            self.db.require_snapshot(generation)
+        # Pending children may refer to a resolved/ignored parent. Retain that evidence;
+        # unresolved parent identity still follows the existing needs_review path.
+        def missing_parents():
+            comments = [(row.get('accountId'), row['comment']) for row in rows
+                        if isinstance(row, dict) and isinstance(row.get('comment'), dict)]
+            known = {(aid, str(comment.get('id'))) for aid, comment in comments}
+            return {(aid, str(comment.get('parentId') or comment.get('replyToId')))
+                    for aid, comment in comments if comment.get('parentId') or comment.get('replyToId')} - known
+        if hasattr(self.api, 'comment_inbox'):
+            for status in ('resolved', 'ignored'):
+                missing = missing_parents()
+                if not missing:
+                    break
+                parent_accounts = sorted({aid for aid, _ in missing if aid in self.accounts})
+                for offset in range(0, len(parent_accounts), group_size):
+                    batch = await self.api.comment_inbox(parent_accounts[offset:offset + group_size],
+                                                        status=status, max_pages=max_pages)
+                    rows.extend(r for r in batch['rows'] if isinstance(r.get('comment'), dict)
+                                and (r.get('accountId'), str(r['comment'].get('id'))) in missing)
+                    self.db.require_snapshot(generation)
         self.db.require_snapshot(generation)
         inserted = 0
         for raw in rows:
@@ -125,8 +177,11 @@ class ReplyWorker:
             reason = 'Sebelum aktivasi.' if old else skip_reason(item, self.own_ids_for(item['account_id']), self.keywords)
             inserted += self.db.ingest(item, 'skipped' if reason else 'queued', reason)
         self.store.set('reply_poll_at', iso())
+        self.store.set('reply_inbox_pages', next_positions)
         self.store.set('reply_poll_error', None)
-        self.store.record('reply_poll', comments=len(rows), inserted=inserted, accounts=len(self.accounts))
+        self.store.record('reply_poll', comments=len(rows), inserted=inserted, accounts=len(self.accounts),
+                          page_window_exhausted=exhausted, unresolved_parents=len(missing_parents()))
+        return {'inserted': inserted, 'exhausted': exhausted}
 
     async def children(self, item, generation=None):
         result, token, seen = [], None, set()
@@ -362,8 +417,16 @@ class ReplyWorker:
 
     async def polling_loop(self):
         while True:
+            self.poll_wakeup.clear()
+            base = self.config.section('reply')['poll_seconds']
+            maximum = max(base, self.config.section('reply').get('poll_max_seconds', 300))
+            delay = base
             try:
-                await self.ingest()
+                with api_scope('reply'):
+                    result = await self.ingest()
+                if result:
+                    self.empty_polls = (self.empty_polls + 1 if not result['inserted'] and result['exhausted'] else 0)
+                    delay = min(maximum, base * 2 ** min(self.empty_polls, 6))
                 self.store.health('reply_poll', 'ok')
             except ReplyWait as exc:
                 self.store.set('reply_poll_error', None)
@@ -372,9 +435,14 @@ class ReplyWorker:
                 self.store.health('reply_poll', 'error', reason=safe_error(exc))
                 self.store.set('reply_poll_error', safe_error(exc))
                 self.store.record('reply_poll_failed', error=safe_error(exc))
-            await asyncio.sleep(self.config.section('reply')['poll_seconds'])
+                if isinstance(exc, ReplizError) and exc.status == 429:
+                    delay = max(base, exc.retry_after)
+            try:
+                await asyncio.wait_for(self.poll_wakeup.wait(), timeout=delay)
+            except TimeoutError:
+                pass
 
-    async def ensure_profile(self, job, generation=None):
+    async def ensure_profile(self, job, generation=None, sweep=None):
         async with self.profile_lock:
             job = self.store.job(job['id'])
             generation = self.db.require_snapshot(generation, account_id=job['account_id'])
@@ -391,7 +459,10 @@ class ReplyWorker:
                 except (ConfigurationError, ValueError) as exc:
                     raise MutationNotSent(str(exc)) from None
             try:
-                result = await self.profiles.ensure_post(job, before_mutation=before_mutation)
+                options = {'before_mutation': before_mutation}
+                if sweep is not None:
+                    options['sweep'] = sweep
+                result = await self.profiles.ensure_post(job, **options)
                 self.db.require_snapshot(generation, account_id=job['account_id'])
             except ConfigurationError:
                 raise
@@ -425,6 +496,7 @@ class ReplyWorker:
                     julianday(json_extract(payload,'$.comment_profile.checked_at')),created_at,id""").fetchall()
         count, failures = 0, []
         batch_limit = max(1, min(20, self.config.section('reply').get('profile_batch_size', 5)))
+        sweep = ProfileSweep()
         for row in rows:
             job = self.store.job(row['id'])
             if job['account_id'] not in self.accounts:
@@ -437,7 +509,7 @@ class ReplyWorker:
                 continue
             count += 1
             try:
-                await self.ensure_profile(job)
+                await self.ensure_profile(job, sweep=sweep)
             except ReplyWait:
                 raise
             except Exception as exc:
@@ -455,7 +527,8 @@ class ReplyWorker:
     async def profile_loop(self):
         while True:
             try:
-                await self.profile_once()
+                with api_scope('background'):
+                    await self.profile_once()
                 if not self.store.get('reply_enabled', False):
                     self.store.health('reply_profiles', 'waiting')
             except ReplyWait as exc:
@@ -472,8 +545,9 @@ class ReplyWorker:
         while True:
             try:
                 if self.store.get('reply_enabled', False):
-                    await self.process_one()
-                    await self.reconcile()
+                    with api_scope('reply'):
+                        await self.process_one()
+                        await self.reconcile()
                     self.store.set('reply_worker_at', iso())
                 self.store.health('reply_worker', 'ok' if self.store.get('reply_enabled', False) else 'waiting')
             except ReplyWait as exc:
@@ -487,7 +561,7 @@ class ReplyWorker:
 async def preview(config, job_id, text, folder):
     if folder.exists():
         raise ValueError('Folder preview harus baru.')
-    with closing(sqlite3.connect((config.runtime / 'workflow.sqlite3').resolve().as_uri() + '?mode=ro', uri=True)) as c:
+    with closing(sqlite3.connect(config.database_path.resolve().as_uri() + '?mode=ro', uri=True)) as c:
         c.row_factory = sqlite3.Row
         row = c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
         if not row:
@@ -519,7 +593,7 @@ def main():
     if args.action == 'preview':
         result = asyncio.run(preview(config, args.job, args.text, args.folder))
     else:
-        store = Store(config.runtime / 'workflow.sqlite3', readonly=args.action == 'status')
+        store = Store(config.database_path, readonly=args.action == 'status')
         db = ReplyStore(store)
         if args.action in {'activate', 'resume'}:
             config.require_live_action()

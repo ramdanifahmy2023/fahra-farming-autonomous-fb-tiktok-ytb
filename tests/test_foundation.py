@@ -64,6 +64,8 @@ class StoreTest(unittest.TestCase):
             return [self.store.decode(r) for r in c.execute('SELECT * FROM jobs ORDER BY rowid')]
 
     def test_one_source_two_deliveries_and_independent_persistent_rotation(self):
+        with self.store.connect() as c:
+            c.execute('UPDATE accounts SET slot_offset=0')
         result = self.enqueue(2)
         self.assertEqual(result['accepted'], 2)
         self.assertEqual(len(self.rows()), 4)
@@ -222,7 +224,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.fb, self.yt = [self.store.job(j['id']) for j in self.store.queue()]
         self.repliz = Mock(payload=Repliz.payload, check_account=AsyncMock(), create=AsyncMock(side_effect=['remote-fb', 'remote-yt']), reconcile=AsyncMock(return_value=None))
         self.repliz.status = AsyncMock(side_effect=lambda sid: {'id': sid, 'status': 'success',
-            'accountId': 'facebook-0' if sid == 'remote-fb' else 'youtube-0',
+            'accountId': self.fb['account_id'] if sid == 'remote-fb' else self.yt['account_id'],
             'postId': '12345' if sid == 'remote-fb' else 'abcdefghijk',
             'scheduleAt': self.store.job(self.fb['id'] if sid == 'remote-fb' else self.yt['id'])['planned_at']})
         self.source = self.root / 'source.mp4'

@@ -106,3 +106,12 @@ Renderer hook memakai Pillow dari `requirements.lock` dan font Barlow yang ikut 
 Gunakan CLI utama `.venv/bin/python -m fahra_automation reply status|pause|resume` untuk operasi rutin. Sakelar reply dibaca dari SQLite. Sesudah mengubah config.local.toml, restart service agar konfigurasi seluruh komponen diterapkan konsisten. Sebagian nilai dibaca ulang oleh loop, tetapi klien dan objek yang sudah dibuat tidak semuanya diperbarui. Restart juga wajib setelah perubahan kode atau kredensial klien. Kedua jalur CLI dan inventory memakai pencatatan cutoff yang sama: akun migrasi mempertahankan tanggal lamanya, akun baru memakai waktu bergabung, dan reconnect tidak menggeser cutoff. CLI sekunder pada modul replies tetap memiliki preflight GET dan perintah activate untuk aktivasi pertama. Resume dapat melanjutkan backlog legacy yang masih memenuhi umur dan kuota. Setiap pengiriman tetap memerlukan konteks serta profil single owner yang sudah dibaca ulang.
 
 Batch mendukung maksimal 100 link per pesan, backlog 1.000 asset pending, dengan rotasi yang berlanjut antarbatch/restart. Batas tersebut terpisah dari kuota 20 video per akun per hari WIB.
+
+
+## Perubahan operasi latensi 21 Oktober
+
+Schema v3 menambah tabel penantian/cooldown dan indeks. Gunakan `Config.database_path` atau CLI `storage status`; jangan mengasumsikan DB aktif selalu di runtime. `storage migrate FILE_SQLITE_ABSOLUT` hanya bekerja saat layanan berhenti, seluruh kontrol pause, dan lease selesai. Prosedur lengkap ada di [operasi](docs/OPERATIONS.md#latensi-webhook-dan-lokasi-database).
+
+`scripts/preview_latency.py --production-root PATH --output runtime/verification/FOLDER_BARU` membaca satu manifest produksi secara read-only, membuat DB fixture sendiri, menghasilkan satu persona AI nyata, menguji reuse tanpa AI kedua, lalu memeriksa tiga checksum Drive penuh. Tidak memakai Repliz atau Telegram. `scripts/preview_webhook.py --output runtime/verification/FILENAME.json` hanya memakai HTTP loopback dan provider fixture. Jangan menganggap kedua preview ini sebagai publikasi nyata.
+
+Webhook loopback memakai port 8769 dan `x-token` dari Credential. Tunnel yang diberikan pengguna sudah memiliki layanan lain; tidak perlu memasang atau merestart connector tambahan. Token tunnel disimpan memakai file, bukan nilai di argumen. Verifier mengenali token file webhook/tunnel untuk pemeriksaan kebocoran dan redaksi.

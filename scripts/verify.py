@@ -65,6 +65,10 @@ def known_secrets(folders):
             if not path.is_file() or path.is_symlink() or path.stat().st_size > 1_000_000:
                 continue
             source = path.read_text(errors='replace').replace('\\_', '_')
+            if path.name in {'repliz-webhook-token.txt', 'cloudflared-tunnel-token.txt'}:
+                value = source.strip()
+                if re.fullmatch(r'[\x21-\x7e]{32,2048}', value):
+                    values.add(value)
             pairs = {}
             for match in re.finditer(r'''(?im)^\s*(access_key|secret_key|api[_ -]?key)\s*[:=]\s*["'`]?([^\s"'`]+)''', source):
                 pairs[match[1]] = match[2]

@@ -124,6 +124,8 @@ class SchedulerTest(unittest.TestCase):
     def test_rotation_and_stable_offset_survive_reopen_and_reconnect(self):
         accounts = self.accounts + [account('tiktok', 1), account('tiktok', 2)]
         self.sync(accounts)
+        with self.store.connect() as c:
+            c.execute("UPDATE accounts SET slot_offset=0 WHERE platform='tiktok'")
         self.enqueue(2)
         offsets = {a['id']: a['slot_offset'] for a in self.store.accounts()}
         self.store = Store(self.store.path)
