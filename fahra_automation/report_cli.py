@@ -10,6 +10,7 @@ from .config import Config
 from .db import Store
 from .repliz import Repliz
 from .report_store import ReportStore
+from .report_store import decode_photo
 from .report_views import ZONE
 from .util import now
 
@@ -30,15 +31,25 @@ async def preview(config, credentials_from=None):
         run = worker.db.create('preview', at.astimezone(ZONE).date().isoformat(), at, at + timedelta(minutes=10), at)
         await worker.collect(run)
         worker.freeze(worker.db.run(run['id']), now())
-        with store.connect() as c:
-            parts = [dict(r) for r in c.execute('SELECT part_no,text,content_hash FROM account_report_parts ORDER BY part_no')]
+        parts = worker.db.parts(run['id'])
         evidence = {'run': worker.db.run(run['id']), 'snapshots': worker.db.rows(run['id']), 'parts': parts, 'sent': False}
         (folder / 'evidence.json').write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
-        (folder / 'telegram.html').write_text('<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview laporan TikTok</title><style>body{font:16px/1.55 system-ui;max-width:430px;margin:24px auto;padding:0 16px;background:#f5f5f2;color:#222}article{white-space:pre-wrap;background:white;padding:20px;border:1px solid #ddd;margin-bottom:20px;border-radius:12px}a{color:#165b92}@media(prefers-color-scheme:dark){body{background:#17191c;color:#eee}article{background:#22262b;border-color:#444}a{color:#82c5fa}}</style>' + ''.join('<article>' + p['text'] + '</article>' for p in parts) + '</html>')
+        articles = []
+        for part in parts:
+            media = ''
+            if part.get('photo'):
+                filename = f"chart-{part['part_no']}.png"
+                (folder / filename).write_bytes(decode_photo(part['photo']))
+                media = f'<img src="{filename}" alt="Grafik target 600 followers. Rincian seluruh akun tersedia sebagai teks di bawah.">'
+            articles.append('<article>' + media + part['text'] + '</article>')
+        (folder / 'telegram.html').write_text('<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview laporan TikTok</title><style>body{font:1rem/1.55 system-ui;max-width:430px;margin:24px auto;padding:0 16px;background:#f5f5f2;color:#222}article{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:16px;border:1px solid #ddd;margin-bottom:20px;border-radius:12px}img{display:block;max-width:100%;height:auto;margin-bottom:16px}a{color:#165b92}@media(prefers-color-scheme:dark){body{background:#17191c;color:#eee}article{background:#22262b;border-color:#444}a{color:#82c5fa}}</style>' + ''.join(articles) + '</html>')
         rows = evidence['snapshots']
         return {'folder': str(folder), 'inventory_complete': bool(evidence['run']['inventory_complete']),
                 'valid': sum(r['status'] == 'ok' for r in rows), 'total': len(rows), 'parts': len(parts), 'sent': False,
-                'qualified': [{'username': r['username'], 'followers': r['data']['followers']} for r in rows if r['status'] == 'ok' and r['data']['followers'] > 600]}
+                'reached': sum(r['status'] == 'ok' and r['data']['followers'] >= 600 for r in rows),
+                'below': sum(r['status'] == 'ok' and r['data']['followers'] < 600 for r in rows),
+                'unknown': sum(r['status'] != 'ok' for r in rows),
+                'qualified': [{'username': r['username'], 'followers': r['data']['followers']} for r in rows if r['status'] == 'ok' and r['data']['followers'] >= 600]}
     finally:
         await api.close()
 

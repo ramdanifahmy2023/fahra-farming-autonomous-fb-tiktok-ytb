@@ -55,6 +55,8 @@ Git origin memakai HTTPS dan helper `gh auth git-credential` lokal repo. Jangan 
 
 ## Laporan TikTok 08.00 WIB
 
+Pembaruan 21 Oktober: target **≥600**, daftar semua akun dalam lingkup, PNG ringkasan dan tren snapshot harian. Preview juga menulis `chart-1.png`; evidence.json memuat manifest gambar beserta hash. Grafik memakai Pillow/font Barlow yang sudah terpasang. Tabel media dibuat otomatis oleh ReportStore pada startup tulis; schema workflow tetap v2. Backup bundle menyimpan PNG di DB serta jurnal, sehingga tidak memerlukan file gambar sementara. Preview baru memiliki histori kosong; verifikasi tren memakai snapshot harian nyata yang diekstrak read-only sebagai bukti, bukan salinan DB aktif. Detail ada di [FOLLOWER_DASHBOARD.md](docs/FOLLOWER_DASHBOARD.md).
+
 CLI `report preview|status|enable|disable|pilot` tersedia; [prosedur laporan](docs/OPERATIONS.md#laporan-tiktok-harian) menjelaskan sakelar, tujuan private admin, baseline, catch-up dan pemulihan send_unknown. Preview hanya GET dengan DB terisolasi. Pengiriman dilakukan worker produksi yang sama; CLI pilot hanya mengantrekan permintaan, tanpa getUpdates kedua. Arsip implementasi berada di runtime/verification/tiktok-daily-report-20261018/.
 
 ## Paket dan operasi
