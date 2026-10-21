@@ -1,13 +1,19 @@
 """Reporting history is independent from publishing inventory and quota snapshots."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 from datetime import datetime, timedelta
+from io import BytesIO
+
+from PIL import Image
 
 from .util import iso
 
 CHAT_ID = 265732518
+MAX_PHOTO_BYTES = 2 * 1024 * 1024
 
 
 def date_from_day(value):
@@ -20,6 +26,50 @@ def encode(value):
 
 def digest(value):
     return hashlib.sha256(encode(value).encode()).hexdigest()
+
+
+def decode_photo(value):
+    if not isinstance(value, str) or len(value) > 4 * ((MAX_PHOTO_BYTES + 2) // 3):
+        raise ValueError('Gambar laporan melebihi batas ukuran.')
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError('Gambar laporan bukan base64 yang valid.') from None
+    if (not raw or len(raw) > MAX_PHOTO_BYTES or not raw.startswith(b'\x89PNG\r\n\x1a\n')
+            or base64.b64encode(raw).decode('ascii') != value):
+        raise ValueError('Gambar laporan harus berupa PNG dengan ukuran terbatas.')
+    try:
+        with Image.open(BytesIO(raw)) as picture:
+            width, height = picture.size
+            if (picture.format != 'PNG' or min(width, height) < 1 or width + height > 10000
+                    or max(width, height) > 20 * min(width, height) or width * height > 16_000_000
+                    or getattr(picture, 'n_frames', 1) != 1):
+                raise ValueError('Dimensi gambar laporan tidak valid.')
+            picture.verify()
+    except (OSError, SyntaxError, Image.DecompressionBombError):
+        raise ValueError('PNG laporan rusak.') from None
+    return raw
+
+
+def part_hash(part):
+    text = part.get('text')
+    if not isinstance(text, str):
+        raise ValueError('Teks laporan tidak valid.')
+    if part.get('photo') is None:
+        return digest(text)
+    decode_photo(part['photo'])
+    if len(text.encode('utf-16-le')) // 2 > 1024:
+        raise ValueError('Caption gambar laporan melebihi batas Telegram.')
+    return digest({'text': text, 'photo': part['photo']})
+
+
+def sending_body(part):
+    if part['content_hash'] != part_hash(part):
+        raise ValueError('Hash isi laporan tidak cocok.')
+    body = {'chat_id': CHAT_ID, 'text': part['text'], 'content_hash': part['content_hash']}
+    if part.get('photo') is not None:
+        body['photo'] = part['photo']
+    return body
 
 
 class ReportStore:
@@ -47,6 +97,9 @@ class ReportStore:
                     message_id INTEGER, next_attempt TEXT, attempts INTEGER NOT NULL DEFAULT 0,
                     sent_at TEXT, last_error TEXT, UNIQUE(run_id, part_no),
                     FOREIGN KEY(run_id) REFERENCES account_report_runs(id));
+                CREATE TABLE IF NOT EXISTS account_report_media (
+                    part_id TEXT PRIMARY KEY, photo TEXT NOT NULL,
+                    FOREIGN KEY(part_id) REFERENCES account_report_parts(id));
             ''')
 
     def create(self, kind, day, due, deadline, at):
@@ -66,6 +119,18 @@ class ReportStore:
         with self.store.connect() as c:
             rows = c.execute('SELECT * FROM account_metric_snapshots WHERE run_id=? ORDER BY account_id', (identity,)).fetchall()
         return [{**dict(r), 'data': json.loads(r['data']) if r['data'] else None} for r in rows]
+
+    def part(self, identity):
+        with self.store.connect() as c:
+            row = c.execute('SELECT p.*,m.photo FROM account_report_parts p '
+                            'LEFT JOIN account_report_media m ON m.part_id=p.id WHERE p.id=?', (identity,)).fetchone()
+        return dict(row) if row else None
+
+    def parts(self, identity):
+        with self.store.connect() as c:
+            rows = c.execute('SELECT p.id,p.run_id,p.part_no,p.text,p.content_hash,m.photo FROM account_report_parts p '
+                             'LEFT JOIN account_report_media m ON m.part_id=p.id WHERE p.run_id=? ORDER BY p.part_no', (identity,)).fetchall()
+        return [{key: value for key, value in dict(row).items() if key != 'photo' or value is not None} for row in rows]
 
     def inventory(self, identity, accounts, excluded):
         with self.store.tx() as c:
@@ -117,22 +182,30 @@ class ReportStore:
                              (run['day'], previous or '')).fetchone()[0]
 
     def manifest(self, run, parts, at):
+        normalized = []
+        for i, value in enumerate(parts, 1):
+            part = {'text': value} if isinstance(value, str) else dict(value)
+            if set(part) - {'text', 'photo'} or part.get('photo', '') is None:
+                raise ValueError('Bagian laporan tidak valid.')
+            normalized.append({'id': f"{run['id']}:{i}", 'run_id': run['id'], 'part_no': i,
+                               **part, 'content_hash': part_hash(part)})
         return {'run': {**run, 'state': 'ready', 'frozen_at': iso(at)}, 'snapshots': self.rows(run['id']),
-                'parts': [{'id': f"{run['id']}:{i}", 'run_id': run['id'], 'part_no': i,
-                           'text': text, 'content_hash': digest(text)} for i, text in enumerate(parts, 1)]}
+                'parts': normalized}
 
     def restore(self, body):
         run = body['run']
         if run['chat_id'] != CHAT_ID or run['id'] != f"{run['kind']}:{run['day']}:{CHAT_ID}":
             raise ValueError('Manifest laporan memiliki tujuan/identitas tidak valid.')
         for i, p in enumerate(body['parts'], 1):
-            if (p['content_hash'] != digest(p['text']) or p['run_id'] != run['id'] or p['part_no'] != i
+            expected_keys = {'id', 'run_id', 'part_no', 'text', 'content_hash'} | ({'photo'} if 'photo' in p else set())
+            if (set(p) != expected_keys or ('photo' in p and p['photo'] is None)
+                    or p['content_hash'] != part_hash(p) or p['run_id'] != run['id'] or p['part_no'] != i
                     or p['id'] != f"{run['id']}:{i}"):
                 raise ValueError('Hash/identitas bagian laporan tidak valid.')
         with self.store.tx() as c:
             old = c.execute('SELECT state FROM account_report_runs WHERE id=?', (run['id'],)).fetchone()
             if old and old['state'] == 'ready':
-                existing = [dict(r) for r in c.execute('SELECT id,run_id,part_no,text,content_hash FROM account_report_parts WHERE run_id=? ORDER BY part_no', (run['id'],))]
+                existing = self.parts(run['id'])
                 if existing != body['parts']:
                     raise ValueError('Laporan beku tidak boleh berubah.')
                 return
@@ -147,6 +220,8 @@ class ReportStore:
             for part in body['parts']:
                 c.execute('INSERT OR IGNORE INTO account_report_parts (id,run_id,part_no,text,content_hash,state) VALUES (?,?,?,?,?,?)',
                           (part['id'], part['run_id'], part['part_no'], part['text'], part['content_hash'], 'queued'))
+                if 'photo' in part:
+                    c.execute('INSERT INTO account_report_media (part_id,photo) VALUES (?,?)', (part['id'], part['photo']))
 
     def part_state(self, identity, state, *, message_id=None, next_attempt=None, error=None, at=None):
         with self.store.tx() as c:
@@ -155,7 +230,8 @@ class ReportStore:
 
     def pending(self, at):
         with self.store.connect() as c:
-            row = c.execute("SELECT p.*,r.chat_id,r.day,r.kind FROM account_report_parts p JOIN account_report_runs r ON r.id=p.run_id "
+            row = c.execute("SELECT p.*,r.chat_id,r.day,r.kind,m.photo FROM account_report_parts p JOIN account_report_runs r ON r.id=p.run_id "
+                            "LEFT JOIN account_report_media m ON m.part_id=p.id "
                             "WHERE p.state='queued' AND (p.next_attempt IS NULL OR p.next_attempt<=?) ORDER BY r.day,p.part_no LIMIT 1", (iso(at),)).fetchone()
         return dict(row) if row else None
 

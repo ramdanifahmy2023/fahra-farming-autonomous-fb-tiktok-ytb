@@ -14,7 +14,7 @@ import httpx
 from fahra_automation.account_reports import AccountReports, ReportStopped, parse_statistics
 from fahra_automation.config import Config, EXCLUDED_ACCOUNT_ID
 from fahra_automation.db import Store
-from fahra_automation.report_store import CHAT_ID, ReportStore, digest
+from fahra_automation.report_store import CHAT_ID, ReportStore, digest, sending_body
 from fahra_automation.report_views import ZONE, delta, render_report
 from fahra_automation.telegram import Telegram, TelegramError
 from fahra_automation.util import iso
@@ -34,6 +34,7 @@ def account(identity='a', name='valid', connected=True):
 class Bot:
     def __init__(self):
         self.sent = []
+        self.methods = []
         self.error = None
         self.chat_type = 'private'
 
@@ -42,6 +43,7 @@ class Bot:
 
     async def send_ui(self, method, chat_id, *, before_send=None, **kwargs):
         before_send()
+        self.methods.append(method)
         self.sent.append((chat_id, kwargs))
         if self.error:
             raise self.error
@@ -78,17 +80,20 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         return run
 
     def part(self, run):
-        with self.store.connect() as c:
-            return dict(c.execute('SELECT * FROM account_report_parts WHERE run_id=? ORDER BY part_no', (run['id'],)).fetchone())
+        return self.worker.db.part(self.worker.db.parts(run['id'])[0]['id'])
+
+    def text(self, run):
+        return '\n'.join(part['text'] for part in self.worker.db.parts(run['id']) if 'photo' not in part)
 
     async def test_threshold_all_accounts_are_stored(self):
         self.api.pages.return_value = [account(str(i), f'user{i}') for i in range(3)]
         self.api.request.side_effect = [metric(599), metric(600), metric(601)]
         run = await self.ready()
-        text = self.part(run)['text']
+        text = self.text(run)
         self.assertIn('@user2', text)
-        self.assertNotIn('@user0', text)
-        self.assertNotIn('@user1', text)
+        self.assertIn('@user0', text)
+        self.assertIn('@user1', text)
+        self.assertIn('Sudah mencapai: <b>2 akun</b> · belum: <b>1 akun</b>', text)
         self.assertEqual(len(self.worker.db.rows(run['id'])), 3)
 
     async def test_protected_identity_and_normalized_name_never_fetched(self):
@@ -100,8 +105,8 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
     async def test_failed_inventory_never_claims_empty(self):
         self.api.pages.side_effect = ValueError('pagination incomplete')
         run = await self.ready()
-        self.assertIn('cakupan akun belum diketahui', self.part(run)['text'])
-        self.assertNotIn('Tidak ada akun', self.part(run)['text'])
+        self.assertIn('cakupan akun belum diketahui', self.text(run))
+        self.assertNotIn('Tidak ada akun', self.text(run))
 
     async def test_bad_connection_invalidates_inventory(self):
         self.api.pages.return_value = [account(connected=None)]
@@ -113,7 +118,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.api.pages.return_value = [account(), account('b', 'offline', False)]
         self.api.request.side_effect = TimeoutError()
         run = await self.ready()
-        text = self.part(run)['text']
+        text = self.text(run)
         self.assertIn('Statistik gagal untuk 1 akun', text)
         self.assertIn('terputus dari Repliz', text)
         self.assertEqual(self.api.request.await_count, 2)
@@ -122,7 +127,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.api.pages.return_value = [account(), account('b', 'failed')]
         self.api.request.side_effect = [metric(9500), metric(None), metric(None)]
         run = await self.ready()
-        text = self.part(run)['text']
+        text = self.text(run)
         self.assertIn('1/2 akun', text)
         self.assertIn('9.500 follower', text)
         self.assertIn('@failed', text)
@@ -154,21 +159,21 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.api.pages.return_value = [account(name='renamed')]
         self.api.request.return_value = metric(700)
         run = await self.ready()
-        self.assertIn('Username sebelumnya', self.part(run)['text'])
-        self.assertIn('Harian: <b>+101</b>', self.part(run)['text'])
-        self.assertNotIn('Baru dipantau', self.part(run)['text'])
+        self.assertIn('Username sebelumnya', self.text(run))
+        self.assertIn('Harian: <b>+101</b>', self.text(run))
+        self.assertNotIn('Baru dipantau', self.text(run))
 
     async def test_crossing_and_drop(self):
         self.at = AT - timedelta(days=1)
         self.api.pages.return_value = [account(), account('b', 'second')]
-        self.api.request.side_effect = [metric(599), metric(800), metric(700), metric(600)]
+        self.api.request.side_effect = [metric(599), metric(800), metric(600), metric(599)]
         await self.ready()
         self.at = AT
         run = await self.ready()
-        text = self.part(run)['text']
-        self.assertIn('Baru melewati 600', text)
-        self.assertIn('Turun ke ≤600', text)
-        self.assertIn('−200', text)
+        text = self.text(run)
+        self.assertIn('Baru mencapai 600', text)
+        self.assertIn('Turun ke bawah 600', text)
+        self.assertIn('−201', text)
 
     async def test_schedule_freezes_at_8_not_759(self):
         self.at = AT - timedelta(minutes=10)
@@ -195,7 +200,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         await self.worker.tick()
         run = self.worker.db.summary()['runs'][0]
         self.assertEqual(run['state'], 'ready')
-        self.assertIn('belum selesai', self.part(run)['text'])
+        self.assertIn('belum selesai', self.text(run))
 
     async def test_catch_up_is_late_and_one_run(self):
         self.at = AT + timedelta(hours=2)
@@ -203,7 +208,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         await self.worker.collection
         await self.worker.tick()
         run = self.worker.db.summary()['runs'][0]
-        self.assertIn('terlambat', self.part(run)['text'])
+        self.assertIn('terlambat', self.text(run))
         await self.worker.tick()
         self.assertEqual(len(self.worker.db.summary()['runs']), 1)
 
@@ -216,7 +221,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         await self.worker.collection
         await self.worker.tick()
         self.assertEqual(self.api.request.await_count, 2)
-        self.assertIn('terlambat', self.part(self.worker.db.summary()['runs'][0])['text'])
+        self.assertIn('terlambat', self.text(self.worker.db.summary()['runs'][0]))
 
     async def test_no_old_day_flood(self):
         self.store.set('account_report_activation_day', '2026-10-16')
@@ -252,14 +257,15 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_once_restart_and_restore_old_database(self):
         run = await self.ready()
-        await self.worker.flush_one()
-        await self.worker.flush_one()
+        count = len(self.worker.db.parts(run['id']))
+        for _ in range(count + 1):
+            await self.worker.flush_one()
         restored = Store(self.root / 'runtime/restored.sqlite3')
         restored.set('account_report_enabled', True)
         worker = AccountReports(self.config, restored, self.api, self.bot, clock=lambda: self.at)
         worker.recover()
         await worker.flush_one()
-        self.assertEqual(len(self.bot.sent), 1)
+        self.assertEqual(len(self.bot.sent), count)
         self.assertEqual(worker.db.summary()['parts'][0]['state'], 'sent')
         self.assertEqual(worker.db.rows(run['id'])[0]['data']['followers'], 601)
 
@@ -270,15 +276,15 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.worker.recovered = False
         await self.worker.flush_one()
         self.assertEqual(self.part(run)['state'], 'send_unknown')
-        self.assertEqual(len(self.bot.sent), 1)
+        self.assertEqual(self.bot.methods.count('sendPhoto'), 1)
 
     async def test_crash_after_intent_blocks_resend(self):
         run = await self.ready()
         part = self.part(run)
-        self.worker.journal.begin('send:' + part['id'], {'chat_id': CHAT_ID, 'text': part['text'], 'content_hash': part['content_hash']})
+        self.worker.journal.begin('send:' + part['id'], sending_body(part))
         await self.worker.flush_one()
         self.assertEqual(self.part(run)['state'], 'send_unknown')
-        self.assertEqual(self.bot.sent, [])
+        self.assertNotIn('sendPhoto', self.bot.methods)
 
     async def test_accepted_response_recovers_after_database_ack_failure(self):
         run = await self.ready()
@@ -301,12 +307,12 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         await self.worker.flush_one()
         self.worker.recovered = False
         await self.worker.flush_one()
-        self.assertEqual(len(self.bot.sent), 1)
+        self.assertEqual(self.bot.methods.count('sendPhoto'), 1)
         self.at += timedelta(seconds=61)
         self.bot.error = None
         await self.worker.flush_one()
         self.assertEqual(self.part(run)['state'], 'sent')
-        self.assertEqual(len(self.bot.sent), 2)
+        self.assertEqual(self.bot.methods.count('sendPhoto'), 2)
 
     async def test_permanent_format_and_blocked_errors(self):
         for code in (400, 403, 404):
@@ -317,7 +323,7 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
             self.worker.recovered = False
             await self.worker.flush_one()
             self.assertEqual(self.part(run)['state'], 'failed')
-        self.assertEqual(len(self.bot.sent), 3)
+        self.assertEqual(self.bot.methods.count('sendPhoto'), 3)
 
     async def test_corrupted_manifest_blocks_delivery(self):
         run = await self.ready()
@@ -367,12 +373,12 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.at = AT
         self.api.pages.return_value = [account()]
         run = await self.ready()
-        self.assertIn('Terhubung kembali', self.part(run)['text'])
-        self.assertIn('baseline D−1 belum tersedia', self.part(run)['text'])
+        self.assertIn('Terhubung kembali', self.text(run))
+        self.assertIn('baseline D−1 belum tersedia', self.text(run))
         self.at += timedelta(days=1)
         self.api.pages.return_value = []
         run = await self.ready()
-        self.assertIn('tidak ada pada inventaris Repliz', self.part(run)['text'])
+        self.assertIn('tidak ada pada inventaris Repliz', self.text(run))
 
     async def test_seven_day_exact_date_not_previous_available(self):
         self.at = AT - timedelta(days=7)
@@ -384,12 +390,12 @@ class ReportCase(unittest.IsolatedAsyncioTestCase):
         self.at = AT
         self.api.request.return_value = metric(700)
         run = await self.ready()
-        text = self.part(run)['text']
+        text = self.text(run)
         self.assertIn('7 hari: <b>−100</b>', text)
         self.assertIn('baseline D−1 belum tersedia', text)
 
     async def test_second_part_timeout_preserves_first_message(self):
-        self.api.pages.return_value = [account(str(i), 'user' + str(i)) for i in range(12)]
+        self.api.pages.return_value = [account(str(i), 'user' + str(i)) for i in range(75)]
         run = await self.ready()
         await self.worker.flush_one()
         self.bot.error = TimeoutError()
@@ -514,7 +520,7 @@ class ParserAndViewTests(unittest.TestCase):
         rows = [{'account_id':str(i), 'username':f'user{i}' if i else '<script>😀&"', 'status':'ok', 'fetched_at':iso(AT), 'data':parse_statistics(metric(99999+i), AT)} for i in range(75)]
         parts = render_report(run, rows, {}, {}, {})
         combined = '\n'.join(parts)
-        self.assertGreater(len(parts), 12)
+        self.assertGreaterEqual(len(parts), 10)
         self.assertNotIn('<script>', combined)
         self.assertIn('&lt;script&gt;', combined)
         for i in range(1,75):

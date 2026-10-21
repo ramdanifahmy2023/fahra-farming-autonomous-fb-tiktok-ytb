@@ -1,5 +1,7 @@
 # Rencana laporan TikTok pukul 08.00 WIB
 
+Arsip rancangan 18 Oktober. Permintaan 21 Oktober mengganti filter >600 menjadi pemantauan semua akun yang diizinkan dengan target **≥600**, chart, dan daftar lengkap. Perilaku terbaru ada di [FOLLOWER_DASHBOARD.md](FOLLOWER_DASHBOARD.md) serta [OPERATIONS.md](OPERATIONS.md#laporan-tiktok-harian).
+
 Status lanjutan 18 Oktober 2026: pengguna meminta implementasi di worktree dan push ke main. Kode, fixture dan preview GET nyata selesai; laporan produksi aktif dan pilot 18 Oktober 01:10:48 WIB diterima Telegram (message_id 416, 46/46 statistik sah). Bukti run otomatis 08.00 dan visual native belum tersedia; statusnya tidak disamakan dengan pilot. Dasarnya adalah [audit kode dan GET Repliz nyata](AUDIT_TIKTOK_REPORT_20261018.md). Permintaan lanjutan ini menyetujui implementasi dan tahap aktivasi dalam rencana ini.
 
 ## Hasil yang diminta

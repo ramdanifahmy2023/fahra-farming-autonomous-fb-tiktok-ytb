@@ -45,7 +45,13 @@ class Telegram:
             connection.execute("CREATE TABLE IF NOT EXISTS telegram_delivery_retry(outbox_id INTEGER PRIMARY KEY,next_attempt TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 1)")
 
     async def call(self, method, **data):
-        r = await self.client.post(method, json=data)
+        if method == 'sendPhoto' and isinstance(data.get('photo'), bytes):
+            photo = data.pop('photo')
+            fields = {key: json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list, bool)) else str(value)
+                      for key, value in data.items() if value is not None}
+            r = await self.client.post(method, data=fields, files={'photo': ('tiktok-progress.png', photo, 'image/png')})
+        else:
+            r = await self.client.post(method, json=data)
         try:
             result = r.json()
         except ValueError:
@@ -240,7 +246,11 @@ class Telegram:
             await asyncio.sleep(delay)
         if before_send is not None:
             before_send()
-        result = await self.call(method, chat_id=chat_id, link_preview_options={"is_disabled": True}, **data)
+        if method != 'sendPhoto':
+            data.setdefault('link_preview_options', {"is_disabled": True})
+        else:
+            data.pop('link_preview_options', None)
+        result = await self.call(method, chat_id=chat_id, **data)
         self.chat_sent_at[chat_id] = time.monotonic()
         return result
 

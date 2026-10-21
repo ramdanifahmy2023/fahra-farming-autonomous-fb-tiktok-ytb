@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import re
 from datetime import date, datetime, time, timedelta
 
 from .config import allowed_account
 from .journal import AttemptJournal
-from .report_store import CHAT_ID, ReportStore, digest
+from .report_store import CHAT_ID, ReportStore, decode_photo, digest, sending_body
 from .report_views import ZONE, render_report
+from .report_chart import render_chart
+from .report_history import daily_series
 from .util import iso, now
 
 
@@ -131,9 +134,8 @@ class AccountReports:
             if not item['action_id'].startswith('send:'):
                 continue
             identity = item['action_id'][5:]
-            with self.store.connect() as c:
-                part = c.execute('SELECT * FROM account_report_parts WHERE id=?', (identity,)).fetchone()
-            if not part or item['body'] != {'chat_id': CHAT_ID, 'text': part['text'], 'content_hash': part['content_hash']}:
+            part = self.db.part(identity)
+            if not part or item['body'] != sending_body(part):
                 raise ValueError('Jurnal pengiriman tidak cocok dengan manifest.')
             state = item['state']
             if state == 'accepted':
@@ -224,9 +226,16 @@ class AccountReports:
         run = self.db.run(run['id'])
         run['frozen_at'] = iso(at)
         rows = self.db.rows(run['id'])
+        series = daily_series(self.store, run['day'], current_run=run, current_rows=rows)
         parts = render_report(run, rows, self.db.baseline(run['day'], 1), self.db.baseline(run['day'], 7),
                               self.db.history(run['day']), missed=self.db.missed(run),
-                              previous_connections=self.db.previous_connections(run['day']))
+                              previous_connections=self.db.previous_connections(run['day']), series=series)
+        chart = render_chart(run, rows, series)
+        label = 'Laporan harian' if run['kind'] == 'daily' else 'Preview' if run['kind'] == 'preview' else 'Uji laporan'
+        caption = (f'<b>{label} TikTok · target 600 followers</b>\n'
+                   'Ringkasan capaian, akun terdekat ke target, dan histori snapshot harian.\n'
+                   'Daftar lengkap, angka, serta waktu pengambilan ada pada pesan berikutnya.')
+        parts.insert(0, {'text': caption, 'photo': base64.b64encode(chart).decode('ascii')})
         body = self.db.manifest(run, parts, at)
         self.journal.begin(action, body)
         self.db.restore(body)
@@ -327,6 +336,8 @@ class AccountReports:
         if not self.destination_checked:
             await self.check_destination()
         action = 'send:' + part['id']
+        body = sending_body(part)
+        photo = decode_photo(part['photo']) if part.get('photo') is not None else None
         attempted = False
         def before_send():
             nonlocal attempted
@@ -334,11 +345,15 @@ class AccountReports:
             current = self.clock().astimezone(ZONE)
             if current.date().isoformat() != part['day'] or (part['kind'] == 'daily' and current.hour >= 12):
                 raise ReportStopped('Jendela pengiriman sudah lewat.')
-            self.journal.begin(action, {'chat_id': CHAT_ID, 'text': part['text'], 'content_hash': part['content_hash']})
+            self.journal.begin(action, body)
             attempted = True
             self.db.part_state(part['id'], 'sending')
         try:
-            result = await self.telegram.send_ui('sendMessage', CHAT_ID, text=part['text'], parse_mode='HTML', before_send=before_send)
+            if photo is None:
+                result = await self.telegram.send_ui('sendMessage', CHAT_ID, text=part['text'], parse_mode='HTML', before_send=before_send)
+            else:
+                result = await self.telegram.send_ui('sendPhoto', CHAT_ID, photo=photo, caption=part['text'],
+                                                   parse_mode='HTML', before_send=before_send)
             message_id = result.get('message_id') if isinstance(result, dict) else None
             if type(message_id) is not int or message_id <= 0:
                 raise ValueError('Telegram tidak mengembalikan message_id.')
