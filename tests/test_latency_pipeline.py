@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 
 import test_pipeline as baseline
+from fahra_automation.attribution import caption_from_metadata
 from fahra_automation.db import Store
 from fahra_automation.personas import DEFAULT_PROFILE, PersonaService
 from fahra_automation.repliz import ReplizError
@@ -268,7 +269,9 @@ class LatencyPipelineTest(unittest.IsolatedAsyncioTestCase):
             if asset['source_id'] == 'SLOW':
                 waiting_download.set()
                 await never.wait()
-            return {'source_path': str(source)}
+            return {'source_path': str(source), **caption_from_metadata(asset['url'], {
+                'id': asset['source_id'], 'extractor_key': 'Instagram', 'channel': 'fixture_creator',
+                'description': 'Caption sumber untuk uji antrean.'})}
         async def analyze(*args, **kwargs):
             reached_analysis.set()
             await never.wait()

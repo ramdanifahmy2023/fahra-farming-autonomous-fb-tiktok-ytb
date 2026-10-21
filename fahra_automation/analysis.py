@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import math
 import re
@@ -9,7 +10,9 @@ import re
 import httpx
 
 from .config import ConfigurationError
-from .captioning import DELIVERY_PROMPT, EDITOR_PROMPT, POLICY_VERSION, SYSTEM_PROMPT, editorial_issues
+from .captioning import (DELIVERY_PROMPT, EDITOR_PROMPT, LEGACY_POLICY_VERSION, POLICY_VERSION,
+                        SOURCE_REWRITE_PROMPT, SYSTEM_PROMPT, deterministic_source_copy, editorial_issues,
+                        source_hashtags, source_numbers)
 from .hook import layout_hook
 from .ai_usage import post
 
@@ -70,6 +73,103 @@ class Analyzer:
         return {"hook": hook, "caption": caption, "hashtags": tags}
 
     async def generate(self, client, job, frames, transcript, folder, recent_captions=()):
+        from .attribution import require_source_caption
+
+        source = require_source_caption(job)
+        source_hash = hashlib.sha256(source.encode()).hexdigest()
+        model = self.config.section('ai')['model']
+        trace = {'policy_version': POLICY_VERSION, 'model': model, 'source_caption_sha256': source_hash,
+                 'evidence_kind': 'instagram_caption', 'attempts': []}
+        folder.mkdir(parents=True, exist_ok=True)
+        generated = deterministic_source_copy(source)
+        source_only = generated is not None
+        if source_only:
+            confidence = 1.0
+        else:
+            first_confidence = None
+            messages = [{'role': 'system', 'content': SOURCE_REWRITE_PROMPT},
+                        {'role': 'user', 'content': json.dumps({'source_caption': source}, ensure_ascii=False)}]
+            for attempt in range(2):
+                response = await post(client, store=self.store, operation='caption:source_rewrite', subject=job.get('id'),
+                    payload={'model': model, 'messages': messages, 'response_format': {'type': 'json_object'}})
+                response.raise_for_status()
+                body = response.json()
+                raw = body['choices'][0]['message']['content']
+                entry = {'stage': 'source_rewrite', 'attempt': attempt + 1, 'model': body.get('model'), 'response': raw}
+                trace['attempts'].append(entry)
+                try:
+                    data = json.loads(raw)
+                    if isinstance(data, dict):
+                        score = data.get('confidence')
+                        if type(score) in (float, int) and math.isfinite(score) and 0 <= score <= 1:
+                            first_confidence = score if first_confidence is None else min(first_confidence, score)
+                            data['confidence'] = first_confidence
+                    generated = self.validate_source_rewrite(data, source)
+                    confidence = data['confidence']
+                except LowConfidenceError as exc:
+                    entry['issues'] = [str(exc)]
+                    self.save_review(folder, trace)
+                    raise
+                except (ValueError, TypeError, KeyError) as exc:
+                    entry['issues'] = [str(exc)]
+                    self.save_review(folder, trace)
+                    if attempt:
+                        raise ValueError('Rewrite caption belum lolos setelah satu perbaikan: ' + str(exc)) from exc
+                    messages += [{'role': 'assistant', 'content': raw}, {'role': 'user', 'content':
+                        'Perbaiki format atau kesetiaan teks sekali memakai source_caption yang sama. '
+                        'Jangan menambah fakta atau menaikkan confidence. Masalah: ' + str(exc)}]
+                    continue
+                entry['issues'] = []
+                break
+        self.save_review(folder, trace)
+        return {'generated': generated, 'caption_policy_version': POLICY_VERSION,
+                'caption_review': {'attempts': len(trace['attempts']), 'confidence': confidence,
+                    'confidence_kind': 'source_fidelity', 'evidence_kind': 'instagram_caption',
+                    'caption_source_only': True, 'source_caption_sha256': source_hash,
+                    'empty_source': not source.strip(), 'rewrite_mode': 'source_only' if source_only else 'rewrite',
+                    'models': [a['model'] for a in trace['attempts']]}}
+
+    @staticmethod
+    def validate_source_rewrite(data, source):
+        if not isinstance(data, dict) or not all(k in data for k in ('caption', 'title', 'hashtags', 'confidence')):
+            raise ValueError('Rewrite memerlukan caption, title, hashtags, dan confidence.')
+        confidence = data['confidence']
+        if type(confidence) not in (float, int) or not math.isfinite(confidence) or not 0 <= confidence <= 1:
+            raise ValueError('Confidence rewrite harus angka 0 sampai 1.')
+        if confidence < .8:
+            raise LowConfidenceError('AI belum yakin rewrite mempertahankan makna caption sumber.')
+        caption, title = data['caption'], data['title']
+        if not isinstance(caption, str) or not 1 <= len(caption.strip()) <= 1800:
+            raise ValueError('Caption rewrite harus berisi teks maksimal 1800 karakter.')
+        if (not isinstance(title, str) or not 1 <= len(title.strip()) <= 100
+                or any(ch in title for ch in '<>\n\r') or re.search(r'[#@]|https?://|www\.', title, re.I)):
+            raise ValueError('Judul rewrite harus satu baris 1–100 karakter tanpa hashtag, mention, URL, atau tag.')
+        caption, title = caption.strip(), title.strip()
+        if re.search(r'(?<!\w)#\w+|https?://|www\.|(?:^|\s)source\s*:', caption, re.I):
+            raise ValueError('Caption rewrite tidak boleh memuat hashtag, URL, atau kredit source buatan.')
+        mentions = set(re.findall(r'(?<!\w)@[A-Za-z0-9_.]+', caption))
+        if mentions - set(re.findall(r'(?<!\w)@[A-Za-z0-9_.]+', source)):
+            raise ValueError('Rewrite menambahkan mention yang tidak ada pada caption sumber.')
+        numbers = source_numbers(source)
+        if source_numbers(caption) != numbers or source_numbers(title) - numbers:
+            raise ValueError('Angka caption sumber harus dipertahankan persis tanpa tambahan.')
+        if not isinstance(data['hashtags'], list) or len(data['hashtags']) > 5:
+            raise ValueError('Hashtag rewrite harus daftar nol sampai lima tag sumber.')
+        allowed = set(source_hashtags(source))
+        hashtags = []
+        for tag in data['hashtags']:
+            if not isinstance(tag, str) or not re.fullmatch(r'#[\w]{1,50}', tag):
+                raise ValueError('Format hashtag rewrite tidak valid.')
+            tag = tag.casefold()
+            if tag not in allowed:
+                raise ValueError('Hashtag rewrite harus berasal dari caption Instagram.')
+            if tag not in hashtags:
+                hashtags.append(tag)
+        if data.get('hook', ''):
+            raise ValueError('Kebijakan rewrite tidak membuat hook video.')
+        return {'hook': '', 'caption': caption, 'hashtags': hashtags, 'title': title}
+
+    async def generate_legacy(self, client, job, frames, transcript, folder, recent_captions=()):
         recent = [{"hook": c.get("hook", "")[:60], "caption": c["caption"][:360]}
                   for c in recent_captions if isinstance(c.get("caption"), str)][:8]
         content = [{"type": "text", "text": json.dumps({
@@ -79,7 +179,7 @@ class Analyzer:
         }, ensure_ascii=False)}]
         content.extend({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode()}}
                        for p in frames)
-        trace = {"policy_version": POLICY_VERSION, "model": self.config.section("ai")["model"], "attempts": []}
+        trace = {"policy_version": LEGACY_POLICY_VERSION, "model": self.config.section("ai")["model"], "attempts": []}
         folder.mkdir(parents=True, exist_ok=True)
         evidence = None
         observation_snapshot = None
@@ -144,7 +244,7 @@ class Analyzer:
                         + json.dumps({"perbaikan": issues, "frozen_evidence": observation_snapshot}, ensure_ascii=False)}])
             if issues:
                 raise ValueError("Caption belum lolos pemeriksaan setelah satu perbaikan: " + "; ".join(issues))
-        return {"generated": generated, "caption_policy_version": POLICY_VERSION,
+        return {"generated": generated, "caption_policy_version": LEGACY_POLICY_VERSION,
                 "caption_review": {"attempts": len(trace["attempts"]), "confidence": evidence["confidence"],
                     "models": [a["model"] for a in trace["attempts"]],
                     "observations": evidence["observations"][:1200], "tone": evidence["tone"]}}
@@ -158,6 +258,8 @@ class Analyzer:
         partial.replace(target)
 
     async def analyze(self, job, folder, recent_captions=()):
+        from .attribution import require_source_caption
+        require_source_caption(job)
         self.ready()
         cfg = self.config.section("ai")
         frames, audio = await asyncio.to_thread(self.media.analysis_assets, job["payload"]["source_path"], folder,
@@ -212,6 +314,8 @@ class Analyzer:
                 'hashtags': generated['hashtags'], 'tags': tags}
 
     async def delivery_metadata(self, job, persona, folder):
+        if job['payload'].get('caption_policy_version') == POLICY_VERSION:
+            return self.source_delivery_metadata(job)
         cfg = self.config.section('ai')
         review = job['payload'].get('caption_review') or {}
         if not review.get('observations') or not isinstance(review.get('confidence'), (float, int)) or review['confidence'] < .5:
@@ -224,7 +328,7 @@ class Analyzer:
                    'recent_captions': recent}
         messages = [{'role': 'system', 'content': DELIVERY_PROMPT},
                     {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}]
-        trace = {'policy_version': POLICY_VERSION, 'model_requested': cfg['model'], 'attempts': []}
+        trace = {'policy_version': LEGACY_POLICY_VERSION, 'model_requested': cfg['model'], 'attempts': []}
         folder.mkdir(parents=True, exist_ok=True)
         async with httpx.AsyncClient(base_url=cfg['base_url'].rstrip('/') + '/',
                                     headers={'Authorization': 'Bearer ' + self.config.ai_key()}, timeout=180) as client:
@@ -249,4 +353,31 @@ class Analyzer:
                     continue
                 self.save_review(folder, trace)
                 return {**result, 'model': body.get('model'), 'model_requested': cfg['model'],
-                        'caption_policy_version': POLICY_VERSION, 'confidence': review['confidence']}
+                        'caption_policy_version': LEGACY_POLICY_VERSION, 'confidence': review['confidence']}
+
+    @staticmethod
+    def source_delivery_metadata(job):
+        from .attribution import require_source_caption
+
+        source = require_source_caption(job)
+        payload = job['payload']
+        review = payload.get('caption_review') or {}
+        if (review.get('source_caption_sha256') != hashlib.sha256(source.encode()).hexdigest()
+                or review.get('evidence_kind') != 'instagram_caption' or review.get('caption_source_only') is not True):
+            raise ConfigurationError('Bukti rewrite tidak cocok dengan caption sumber.')
+        generated = payload.get('generated')
+        if not isinstance(generated, dict):
+            raise ConfigurationError('Hasil rewrite bersama belum tersedia.')
+        expected = deterministic_source_copy(source)
+        if expected is not None:
+            if generated != expected or review.get('rewrite_mode') != 'source_only':
+                raise ConfigurationError('Caption sumber tanpa narasi tidak boleh menjadi cerita baru.')
+            clean = expected
+        else:
+            clean = Analyzer.validate_source_rewrite({**generated, 'confidence': review.get('confidence')}, source)
+        description = '\n\n'.join(part for part in (clean['caption'], ' '.join(clean['hashtags'])) if part)
+        return {'title': clean['title'], 'caption': clean['caption'], 'description': description,
+                'hashtags': clean['hashtags'], 'tags': [], 'model_requested': payload.get('analysis_model'),
+                'model': (review.get('models') or [None])[-1], 'caption_policy_version': POLICY_VERSION,
+                'confidence': review.get('confidence'), 'source_caption_sha256': review['source_caption_sha256'],
+                'persona_applied_to_caption': False}

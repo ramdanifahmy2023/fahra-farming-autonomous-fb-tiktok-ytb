@@ -1,7 +1,8 @@
 import copy
 import unittest
 
-from fahra_automation.attribution import credit_description, from_metadata, require_attribution
+from fahra_automation.attribution import (caption_from_metadata, credit_description, from_metadata,
+                                          require_attribution, require_source_caption)
 from fahra_automation.config import ConfigurationError
 
 
@@ -57,3 +58,69 @@ class AttributionTest(unittest.TestCase):
         self.assertEqual(credit_description(text+'\nsource: @owner.real','owner.real',2200),text)
         with self.assertRaises(ConfigurationError):
             credit_description('Caption\nsource: @forged','owner.real',2200)
+
+
+class SourceCaptionTest(unittest.TestCase):
+    def job(self, metadata):
+        return {'url': URL, 'source_id': 'AbCd123', 'payload': caption_from_metadata(URL, metadata)}
+
+    def test_original_caption_is_preserved_exactly_with_owner_bound_provenance(self):
+        caption = '  Kucingnya malah tidur 😭\n\n#kucing '
+        job = self.job({**METADATA, 'description': caption, 'title': 'Judul buatan extractor'})
+        self.assertEqual(require_source_caption(job), caption)
+        proof = job['payload']['source_caption_provenance']
+        self.assertEqual(proof['status'], 'present')
+        self.assertEqual(proof['metadata_sha256'], job['payload']['source_attribution']['metadata_sha256'])
+        self.assertEqual(set(from_metadata(URL, METADATA)), {'source_username', 'source_attribution'})
+
+    def test_confirmed_empty_is_allowed_but_missing_caption_never_uses_fallbacks(self):
+        for metadata in ({**METADATA, 'description': ''}, {**METADATA, 'description': '  \n'},
+                         {**METADATA, '_fahra_caption': {'field': 'caption', 'representation': 'null'}}):
+            with self.subTest(metadata=metadata):
+                job = self.job(metadata)
+                self.assertFalse(require_source_caption(job).strip())
+                self.assertEqual(job['payload']['source_caption_provenance']['status'], 'empty')
+        for patch in ({}, {'description': None}, {'description': 12}, {'title': 'Video by owner.real'},
+                      {'uploader': 'Nama Tampilan'}, {'entries': [{'description': 'Caption video lain'}]},
+                      {'_fahra_caption': {'field': 'caption', 'representation': 'unavailable'}}):
+            with self.subTest(patch=patch), self.assertRaises(ConfigurationError):
+                self.job({**METADATA, **patch})
+
+    def test_raw_caption_and_extractor_description_must_agree(self):
+        raw = {'field': 'caption.text', 'representation': 'text', 'text': 'Caption asli'}
+        job = self.job({**METADATA, 'description': 'Caption asli', '_fahra_caption': raw})
+        self.assertEqual(require_source_caption(job), 'Caption asli')
+        for patch in ({'description': 'Lain'}, {'description': None}, {'_fahra_caption': []},
+                      {'_fahra_caption': None},
+                      {'_fahra_caption': {'field': 'caption', 'representation': 'null'}},
+                      {'_fahra_caption': {'field': 'caption.text', 'representation': 'text', 'text': 1}}):
+            with self.subTest(patch=patch), self.assertRaises(ConfigurationError):
+                self.job({**METADATA, 'description': 'Caption asli', '_fahra_caption': raw, **patch})
+
+    def test_caption_provenance_tampering_and_cross_reel_reuse_are_held(self):
+        original = self.job({**METADATA, 'description': 'Caption asli'})
+        for field, value in (('source_id', 'Other'), ('source_url', URL.replace('AbCd123', 'Other')),
+                             ('username', 'other'), ('provider', 'ai'), ('metadata_sha256', '0' * 64),
+                             ('content_sha256', '0' * 64), ('status', 'empty'), ('field', 'title'),
+                             ('version', 2), ('representation', 'null')):
+            changed = copy.deepcopy(original)
+            changed['payload']['source_caption_provenance'][field] = value
+            with self.subTest(field=field), self.assertRaises(ConfigurationError):
+                require_source_caption(changed)
+        for patch in ({'source_caption': 'Caption diganti'}, {'source_caption': None},
+                      {'source_caption_provenance': None}):
+            changed = copy.deepcopy(original)
+            changed['payload'].update(patch)
+            with self.subTest(patch=patch), self.assertRaises(ConfigurationError):
+                require_source_caption(changed)
+        changed = copy.deepcopy(original)
+        changed['url'] = URL.replace('AbCd123', 'Other')
+        with self.assertRaises(ConfigurationError):
+            require_source_caption(changed)
+
+    def test_empty_rewrite_can_publish_only_source_credit_by_explicit_adapter_option(self):
+        self.assertEqual(credit_description('', 'owner.real', 2200, allow_empty=True), 'source: @owner.real')
+        with self.assertRaises(ValueError):
+            credit_description('', 'owner.real', 2200)
+        with self.assertRaises(ConfigurationError):
+            credit_description('', 'owner.real', 5, allow_empty=True)

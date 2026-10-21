@@ -1,19 +1,21 @@
 # Fahra Automation
 
-Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit, lalu dibuat caption sesuai persona akun dan dijadwalkan ke satu TikTok, satu Facebook Page, dan satu YouTube Shorts. Bot melaporkan progres serta tautan ketika setiap tujuan benar-benar terbit.
+Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit, caption Instagram aslinya dirapikan, lalu hasil yang sama dijadwalkan ke satu TikTok, satu Facebook Page, dan satu YouTube Shorts. Bot melaporkan progres serta tautan ketika setiap tujuan benar-benar terbit.
 
 - Maksimal **20 video per akun per hari WIB**. Rotasi bertahan antarbatch/restart; akun baru ikut otomatis setelah snapshot lengkap. Akun terputus dilewati.
 - Satu asset, tiga antrean mandiri. YouTube penuh tidak mengulang TikTok/FB yang sudah berhasil.
-- Orientasi asli tanpa mirror, zoom 110%, hook Indonesia tiga detik pertama, audio asli. Format bersama 9:16, 3–90 detik, H.264/AAC. Caption/deskripsi mencantumkan `source: @username` Instagram yang terverifikasi.
+- Render baru tanpa teks hook, orientasi asli tanpa mirror, zoom 110%, audio asli. Format bersama 9:16, 3 sampai 90 detik, 30 fps, H.264/AAC. Caption/deskripsi mencantumkan `source: @username` Instagram yang terverifikasi.
 - Bank konten disinkronkan Drive Desktop. Seluruh checksum diverifikasi lagi sebelum setiap pengiriman.
-- [Hook, caption, dan persona](docs/COPY_AND_PERSONA.md) memakai bahasa Indonesia santai berdasarkan isi video; balasan memakai konteks video dan komentar induk. Like/moderasi mengikuti kemampuan platform; YouTube tidak diberi like komentar.
+- [Caption dan persona reply](docs/COPY_AND_PERSONA.md): deskripsi hanya menulis ulang caption sumber, tanpa menambah cerita atau rewrite per akun. Caption kosong cukup memakai kredit sumber. Balasan tetap memakai konteks video dan komentar induk. Like/moderasi mengikuti kemampuan platform; YouTube tidak diberi like komentar.
 - File kerja dibersihkan paling cepat 24 jam setelah semua tujuan wajib terbit. Bank, Drive, konteks, frame, dan histori tetap disimpan.
 
 TikTok **iq7fanspage** selalu dikecualikan. Paket ini menggantikan kedua workflow lama setelah verifikasi dan cutover; konfigurasi bawaan tetap `shadow` sampai kepemilikan diberikan.
 
 Mulai dari [tools.md](tools.md) dan [operasi](docs/OPERATIONS.md). Keputusan tetap ada di [AGENTS.md](AGENTS.md), status/bukti di [memory.md](memory.md) dan [worklog.md](worklog.md). Rancangan dan matriks uji: [PLAN.md](docs/PLAN.md), [ACCEPTANCE.md](docs/ACCEPTANCE.md), [MIGRATION.md](docs/MIGRATION.md).
 
-Audit waktu terbaru: [audit mendalam 21 Oktober 2026](docs/LATENCY_AUDIT_20261021.md), dari penerimaan link sampai hasil publikasi terdeteksi. Berisi pengamatan produksi, empat probe offline, prioritas optimasi, dan batas buktinya; optimasi baru belum diterapkan. [Audit ulang 18 Oktober](docs/AUDIT_20261018.md), [rencana perbaikannya](docs/IMPROVEMENT_PLAN.md), dan [audit 16 Oktober](docs/AUDIT_IMPROVEMENT_20261016.md) adalah arsip; status implementasi masing-masing mengikuti worklog.
+Permintaan caption sumber dan penghapusan hook pada 21 Oktober berlaku untuk pekerjaan yang belum dirender. Video/Bank/Drive, intent, jadwal, dan publikasi yang sudah ada tetap dipertahankan. Status pemeriksaan, pemasangan, dan bukti akhir mengikuti [memory.md](memory.md), [worklog.md](worklog.md), serta `runtime/verification/caption-rewrite-no-hook-20261021/final-git.json`.
+
+Audit waktu terbaru: [audit mendalam 21 Oktober 2026](docs/LATENCY_AUDIT_20261021.md), dari penerimaan link sampai hasil publikasi terdeteksi. [Implementasi latensi](docs/LATENCY_IMPLEMENTATION_20261021.md) sudah dipasang; distribusi waktu produksi setelahnya belum diukur ulang. [Audit ulang 18 Oktober](docs/AUDIT_20261018.md), [rencana perbaikannya](docs/IMPROVEMENT_PLAN.md), dan [audit 16 Oktober](docs/AUDIT_IMPROVEMENT_20261016.md) adalah arsip; status implementasi masing-masing mengikuti worklog.
 
 Credential, runtime, media, dan konfigurasi mesin tidak masuk Git. Repo harus tetap private.
 

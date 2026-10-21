@@ -370,13 +370,16 @@ class Repliz:
 
     @staticmethod
     def payload(job, when):
-        from .attribution import credit_description, require_attribution
+        from .attribution import credit_description, require_attribution, require_source_caption
+        from .captioning import REWRITE_POLICY_VERSION, deterministic_source_copy
         platform = job.get('platform')
         if platform not in PLATFORMS or not job.get('account_id') or job['account_id'] == EXCLUDED_ACCOUNT_ID:
             raise ConfigurationError('Akun tujuan belum dialokasikan atau dikecualikan.')
         metadata = job['payload'].get('delivery_metadata')
         if not isinstance(metadata, dict) or metadata.get('account_id') != job['account_id'] or metadata.get('platform') != platform:
             raise ConfigurationError('Metadata persona belum terikat pada akun tujuan.')
+        rewrite_only = job['payload'].get('caption_policy_version') == REWRITE_POLICY_VERSION
+        source_caption = require_source_caption(job) if rewrite_only else None
         title = metadata.get('title')
         if title is None or isinstance(title, str) and not title.strip():
             generated = job['payload'].get('generated', {})
@@ -390,12 +393,25 @@ class Repliz:
         if not isinstance(hashtags, list) or any(not isinstance(tag, str) or not tag.startswith('#') for tag in hashtags):
             raise ValueError('Hashtag publikasi tidak valid.')
         caption = metadata.get('caption', '')
+        if not isinstance(caption, str):
+            raise ValueError('Caption publikasi harus berupa teks.')
         description = metadata.get('description') if platform == 'youtube' else None
         if description is None:
             description = caption + ('\n\n' + ' '.join(hashtags) if hashtags else '')
-        if not isinstance(description, str) or not description.strip() or len(description) > (2200 if platform == 'tiktok' else 5000):
+        source_copy = deterministic_source_copy(source_caption) if rewrite_only else None
+        if source_copy is not None:
+            expected_description = '\n\n'.join(part for part in
+                (source_copy['caption'], ' '.join(source_copy['hashtags'])) if part)
+            if (caption != source_copy['caption'] or title != source_copy['title']
+                    or hashtags != source_copy['hashtags'] or not isinstance(description, str)
+                    or description.strip() != expected_description):
+                raise ValueError('Caption Instagram tanpa narasi tidak boleh menjadi cerita baru.')
+        credit_only = source_copy is not None and not source_copy['caption'] and not source_copy['hashtags']
+        if (not isinstance(description, str) or (not description.strip() and not credit_only)
+                or len(description) > (2200 if platform == 'tiktok' else 5000)):
             raise ValueError('Caption/deskripsi melampaui batas platform atau kosong.')
-        description = credit_description(description, require_attribution(job), 2200 if platform == 'tiktok' else 5000)
+        description = credit_description(description, require_attribution(job),
+                                         2200 if platform == 'tiktok' else 5000, allow_empty=credit_only)
         info = {'targetCountries': ['ID'], 'isDraft': False}
         if platform == 'youtube':
             tags = metadata.get('tags', [])

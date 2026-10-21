@@ -49,7 +49,7 @@ max_height = 1920
 ffmpeg = "/opt/homebrew/bin/ffmpeg"
 ffprobe = "/opt/homebrew/bin/ffprobe"
 crf = 20
-hook_seconds = 3
+hook_seconds = 0
 min_duration_seconds = 3
 max_duration_seconds = 90
 

@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
-from fahra_automation.attribution import from_metadata
+from fahra_automation.attribution import caption_from_metadata
+from fahra_automation.captioning import REWRITE_POLICY_VERSION
 from fahra_automation.config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID
 from fahra_automation.db import Store, AssetStore, ZONE
 from fahra_automation.pipeline import Pipeline
@@ -229,10 +230,12 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
             'scheduleAt': self.store.job(self.fb['id'] if sid == 'remote-fb' else self.yt['id'])['planned_at']})
         self.source = self.root / 'source.mp4'
         self.source.write_bytes(b'fixture source')
-        self.attribution = from_metadata(self.fb['url'], {'id': 'abc', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'})
+        self.attribution = caption_from_metadata(self.fb['url'], {
+            'id': 'abc', 'extractor_key': 'Instagram', 'channel': 'fixture_creator', 'description': 'Kucing'})
         self.downloader = Mock(download=AsyncMock(return_value={'source_path': str(self.source), 'source_caption': 'Kucing', **self.attribution}))
-        self.generated = {'hook': 'Kucing penasaran', 'caption': 'Matanya langsung melotot.', 'hashtags': ['#kucing']}
-        self.analyzer = Mock(analyze=AsyncMock(return_value={'generated': self.generated}))
+        self.generated = {'hook': '', 'title': 'Kucing', 'caption': 'Kucing', 'hashtags': []}
+        self.analyzer = Mock(analyze=AsyncMock(return_value={
+            'generated': self.generated, 'caption_policy_version': REWRITE_POLICY_VERSION}))
         self.media = Mock()
         self.media.probe.return_value = {'duration': 10}
         def render(source, target, generated, sid):
@@ -242,7 +245,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.drive = Mock(verify_url=AsyncMock(), verify_delivery=AsyncMock(return_value={'verified': True}))
         self.drive.upload.return_value = {'drive_url': 'https://drive.example/video', 'drive_file_id': 'd1'}
         async def metadata(job):
-            return {'account_id': job['account_id'], 'platform': job['platform'], 'title': self.generated['hook'],
+            return {'account_id': job['account_id'], 'platform': job['platform'], 'title': self.generated['title'],
                     'caption': self.generated['caption'], 'hashtags': self.generated['hashtags'], 'tags': ['kucing']}
         self.personas = Mock(prepare_delivery=AsyncMock(side_effect=metadata))
         self.pipeline = Pipeline(self.config, self.store, self.repliz, self.downloader, self.media, self.analyzer, self.drive,
@@ -263,7 +266,7 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p['type'] for p in payloads], ['reel', 'video'])
         self.assertEqual(payloads[0]['medias'][0]['url'], payloads[1]['medias'][0]['url'])
         self.assertNotEqual(payloads[0]['medias'][0]['alt'], payloads[1]['medias'][0]['alt'])
-        self.assertEqual(payloads[1]['title'], self.generated['hook'])
+        self.assertEqual(payloads[1]['title'], self.generated['title'])
         self.assertNotIn('pw:', payloads[1]['title'])
         for j in (self.fb, self.yt):
             self.store.checkpoint(j['id'], payload={'next_poll': ''})

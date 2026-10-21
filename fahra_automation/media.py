@@ -7,8 +7,6 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
-from .hook import create_hook
-
 
 class Media:
     def __init__(self, config):
@@ -89,10 +87,8 @@ class Media:
     def render_filter(self, width, height):
         scaled_width = round(width * 1.1 / 2) * 2
         scaled_height = round(height * 1.1 / 2) * 2
-        # Evaluate hook timing after resampling so 60 fps sources cannot repeat it past 3 seconds.
-        return (f"[0:v]scale={scaled_width}:{scaled_height},crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[base];"
-                "[base][1:v]overlay=x=0:y=0:eof_action=repeat:"
-                f"enable='lt(t,{self.config.section('video')['hook_seconds']})'[video]")
+        return (f"[0:v]scale={scaled_width}:{scaled_height},"
+                f"crop={width}:{height}:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[video]")
 
     def render(self, source, target, generated, job_id):
         info = self.probe(source)
@@ -101,23 +97,19 @@ class Media:
             raise ValueError('Identitas render tidak valid.')
         w, h = info["width"] // 2 * 2, info["height"] // 2 * 2
         target.parent.mkdir(parents=True, exist_ok=True)
-        hook = target.parent / "hook.png"
-        layout = create_hook(generated['hook'], w, h, hook)
-        (target.parent / 'hook-layout.json').write_text(json.dumps(layout, ensure_ascii=False, indent=2) + '\n')
-        (target.parent / 'hook.txt').write_text('\n'.join(layout['lines']), encoding='utf-8')
+        title = generated.get('title') or generated['caption'].splitlines()[0][:100]
         scratch = "/tmp/fahra_automation-render-" + job_id
         docker = [self.docker, "exec", self.container]
         self.run([*docker, "mkdir", "-p", scratch])
         try:
             self.run([self.docker, "cp", str(source), self.container + ":" + scratch + "/source.mp4"])
-            self.run([self.docker, "cp", str(hook), self.container + ":" + scratch + "/hook.png"])
             vf = self.render_filter(w, h)
             self.run([*docker, "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", scratch + "/source.mp4",
-                      "-i", scratch + "/hook.png", "-filter_complex", vf,
+                      "-filter_complex", vf,
                       "-map", "[video]", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast",
                       "-crf", str(self.config.section("video")["crf"]), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
                       "-r", "30",
-                      "-map_metadata", "-1", "-metadata", "title=" + generated["hook"],
+                      "-map_metadata", "-1", "-metadata", "title=" + title,
                       "-metadata", "comment=" + generated["caption"], "-movflags", "+faststart", scratch + "/final.mp4"], timeout=1200)
             partial = target.with_suffix(".partial.mp4")
             self.run([self.docker, "cp", self.container + ":" + scratch + "/final.mp4", str(partial)])

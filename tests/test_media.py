@@ -1,5 +1,4 @@
 import copy
-import json
 import tempfile
 import unittest
 from contextlib import asynccontextmanager
@@ -7,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from fahra_automation.config import Config
-from fahra_automation.attribution import from_metadata
+from fahra_automation.attribution import caption_from_metadata
 from fahra_automation.downloader import Downloader, DownloadUncertain
 from fahra_automation.media import Media
 
@@ -17,15 +16,13 @@ GOOD = {'duration': 30, 'width': 1080, 'height': 1920, 'codec': 'h264', 'audio':
 
 
 class MediaTest(unittest.TestCase):
-    def test_render_filter_keeps_original_orientation_zoom_and_hook_timing(self):
+    def test_render_filter_preserves_orientation_and_zoom_without_any_overlay(self):
         media = Media(Config.load())
+        media.config.data = copy.deepcopy(media.config.data)
+        media.config.data['video']['hook_seconds'] = 3
         vf = media.render_filter(720, 1280)
-        self.assertTrue(vf.startswith('[0:v]scale=792:1408,crop=720:1280:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[base];'))
-        self.assertIn("enable='lt(t,3)'", vf)
-        self.assertIn('[base][1:v]overlay=x=0:y=0:eof_action=repeat:', vf)
-        self.assertLess(vf.index('fps=30'), vf.index('overlay='))
-        self.assertTrue(vf.endswith('[video]'))
-        for transformation in ('hflip', 'vflip', 'transpose', 'rotate'):
+        self.assertEqual(vf, '[0:v]scale=792:1408,crop=720:1280:(iw-ow)/2:(ih-oh)/2,setsar=1,fps=30[video]')
+        for transformation in ('hflip', 'vflip', 'transpose', 'rotate', 'overlay', 'drawtext', '[1:v]', 'enable='):
             self.assertNotIn(transformation, vf)
 
     def test_shared_profile_accepts_boundaries_and_no_audio(self):
@@ -42,8 +39,8 @@ class MediaTest(unittest.TestCase):
             with self.subTest(patch=patch), self.assertRaises(ValueError):
                 Media.validate_delivery({**GOOD, **patch}, 'youtube')
 
-    def test_render_maps_overlay_and_optional_original_audio_without_changing_generated_text(self):
-        generated = {'hook': 'Café: 100% seru!', 'caption': 'Kucing penasaran.'}
+    def test_render_uses_only_source_video_and_optional_original_audio_without_hook_artifacts(self):
+        generated = {'caption': 'Kucing penasaran.'}
         original = copy.deepcopy(generated)
         for audio in (True, False):
             with self.subTest(audio=audio), tempfile.TemporaryDirectory() as folder:
@@ -63,18 +60,43 @@ class MediaTest(unittest.TestCase):
                 command = next(command for command in commands if 'ffmpeg' in command)
                 maps = [command[index + 1] for index, value in enumerate(command) if value == '-map']
                 self.assertEqual(maps, ['[video]', '0:a:0?'])
-                self.assertIn('/tmp/fahra_automation-render-asset-fixture/hook.png', command)
+                self.assertEqual(command.count('-i'), 1)
+                self.assertIn('/tmp/fahra_automation-render-asset-fixture/source.mp4', command)
+                self.assertFalse(any('hook' in part for call in commands for part in call))
                 self.assertEqual(command[command.index('-c:v') + 1], 'libx264')
                 self.assertEqual(command[command.index('-c:a') + 1], 'aac')
                 self.assertEqual(command[command.index('-pix_fmt') + 1], 'yuv420p')
                 self.assertNotIn('-shortest', command)
-                self.assertIn('title=' + generated['hook'], command)
+                self.assertIn('title=' + generated['caption'], command)
                 self.assertIn('comment=' + generated['caption'], command)
                 self.assertEqual(target.read_bytes(), b'new verified render')
                 self.assertFalse(target.with_suffix('.partial.mp4').exists())
-                layout = json.loads((target.parent / 'hook-layout.json').read_text())
-                self.assertEqual((target.parent / 'hook.txt').read_text(), '\n'.join(layout['lines']))
+                for artifact in ('hook.png', 'hook-layout.json', 'hook.txt'):
+                    self.assertFalse((target.parent / artifact).exists())
                 self.assertEqual(generated, original)
+
+    def test_render_leaves_historical_hook_files_untouched(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / 'final.mp4'
+            historical = {name: ('historical ' + name).encode() for name in ('hook.png', 'hook-layout.json', 'hook.txt')}
+            for name, content in historical.items():
+                (target.parent / name).write_bytes(content)
+            media = Media(Config.load())
+            media.probe = Mock(side_effect=[GOOD, GOOD])
+
+            def run(command, **kwargs):
+                if command[1] == 'cp' and command[-2].endswith('/final.mp4'):
+                    Path(command[-1]).write_bytes(b'new verified render')
+                return ''
+
+            media.run = Mock(side_effect=run)
+            media.render(Path(folder) / 'source.mp4', target,
+                         {'hook': 'Old hook ignored', 'title': 'Judul video', 'caption': 'Kucing penasaran.'}, 'asset-fixture')
+            for name, content in historical.items():
+                self.assertEqual((target.parent / name).read_bytes(), content)
+            command = next(call.args[0] for call in media.run.call_args_list if 'ffmpeg' in call.args[0])
+            self.assertIn('title=Judul video', command)
+            self.assertNotIn('title=Old hook ignored', command)
 
     def test_render_failure_or_invalid_result_never_replaces_existing_final(self):
         for failure in ('ffmpeg', 'probe'):
@@ -134,8 +156,8 @@ class DownloaderTest(unittest.IsolatedAsyncioTestCase):
         self.downloader.journal.begin('download:asset1', {'url': self.job['url']})
         self.downloader.journal.mark('download:asset1', 'accepted', schedule_id='mcp-a')
         self.downloader.call = AsyncMock(return_value={'status': 'completed', 'job_id': 'mcp-a', 'url': self.job['url'], 'files': [{'path': str(source)}]})
-        self.downloader.inspect_source = AsyncMock(return_value=from_metadata(
-            self.job['url'], {'id': 'a', 'extractor_key': 'Instagram', 'channel': 'fixture_creator'}))
+        self.downloader.inspect_source = AsyncMock(return_value=caption_from_metadata(
+            self.job['url'], {'id': 'a', 'extractor_key': 'Instagram', 'channel': 'fixture_creator', 'description': ''}))
         result = await self.downloader.download(self.job, self.store)
         self.assertEqual(result['mcp_job_id'], 'mcp-a')
         self.assertEqual(self.downloader.call.call_args.args[1], 'instagram_download_status')

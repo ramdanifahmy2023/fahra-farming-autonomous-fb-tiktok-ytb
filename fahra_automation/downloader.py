@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .attribution import from_metadata, require_attribution
+from .attribution import caption_from_metadata, require_attribution, require_source_caption
 from .config import ConfigurationError
 from .util import iso, normalize_url, exception_leaves, safe_error
 from .journal import AttemptJournal
@@ -48,7 +48,7 @@ class QuietLogger:
 def selected(item):
     if not isinstance(item, dict):
         raise ValueError('Invalid Instagram metadata')
-    result = {key:item[key] for key in ('id','display_id','extractor_key','webpage_url','original_url','channel') if key in item}
+    result = {key:item[key] for key in ('id','display_id','extractor_key','webpage_url','original_url','channel','description','_fahra_caption') if key in item}
     for field in ('owner','user'):
         if field in item:
             value = item[field]
@@ -66,6 +66,21 @@ try:
         with open('/tmp/instagram-mcp.lock', 'a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             import bot, yt_dlp
+            from yt_dlp.extractor.instagram import InstagramIE
+            original_extract_product = InstagramIE._extract_product
+            def extract_product_with_caption(self, product_info, *args, **kwargs):
+                result = original_extract_product(self, product_info, *args, **kwargs)
+                product = product_info[0] if isinstance(product_info, list) and len(product_info) == 1 else product_info
+                raw = {'field':'caption', 'representation':'unavailable'}
+                if isinstance(product, dict) and 'caption' in product:
+                    caption = product['caption']
+                    if caption is None:
+                        raw = {'field':'caption', 'representation':'null'}
+                    elif isinstance(caption, dict) and isinstance(caption.get('text'), str):
+                        raw = {'field':'caption.text', 'representation':'text', 'text':caption['text']}
+                result['_fahra_caption'] = raw
+                return result
+            InstagramIE._extract_product = extract_product_with_caption
             options = bot.ytdlp_options(skip_download=True, extract_flat=False, playlistend=50,
                 getcomments=False, cachedir=False, cookiefile=None, cookiesfrombrowser=None,
                 writeinfojson=False, quiet=True, no_warnings=True, logger=QuietLogger())
@@ -146,7 +161,7 @@ class Downloader:
             raise ConfigurationError('Respons metadata pemilik Instagram tidak valid.') from None
         if not isinstance(response, dict) or response.get('ok') is not True:
             raise ConfigurationError('Pembacaan pemilik Instagram belum berhasil; kiriman ditahan.')
-        return from_metadata(canonical_url, response.get('metadata'))
+        return caption_from_metadata(canonical_url, response.get('metadata'))
 
     def source_path(self, value, job_id):
         if not isinstance(job_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,150}', job_id):
@@ -204,8 +219,16 @@ class Downloader:
                     path = self.source_path(state['files'][0]['path'], job_id)
                     if job['payload'].get('source_attribution'):
                         require_attribution(job)
-                        attribution = {key:job['payload'][key] for key in ('source_username', 'source_attribution')}
+                        if 'source_caption_provenance' in job['payload']:
+                            require_source_caption(job)
+                            attribution = {key:job['payload'][key] for key in (
+                                'source_username', 'source_attribution', 'source_caption', 'source_caption_provenance')}
+                        else:
+                            attribution = await self.inspect_source(job['url'])
+                            if attribution['source_username'] != job['payload']['source_username']:
+                                raise ConfigurationError('Pemilik caption Instagram berubah; sumber perlu diperiksa.')
                     else:
                         attribution = await self.inspect_source(job['url'])
-                    return {"source_path": str(path), "source_caption": state.get("caption") or "",
+                    require_source_caption({**job, 'payload': attribution})
+                    return {"source_path": str(path),
                             'mcp_status': 'completed', 'mcp_job_id': job_id, **attribution}

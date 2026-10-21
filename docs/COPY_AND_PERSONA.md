@@ -1,46 +1,50 @@
-# Hook, caption, dan persona akun
+# Caption sumber dan persona reply
 
-Kebijakan `id-natural-v4` memperbaiki tulisan pada worker Fahra Automation. Ini berbeda dari aplikasi Arker. Font dan renderer tetap `barlow-balanced-v1`.
+Permintaan 21 Oktober 2026: deskripsi cukup menulis ulang caption Instagram asli supaya tidak terasa kaku, dan teks hook di video dihilangkan. Kode memakai kebijakan `id-source-rewrite-v1`. Perubahan ini berada pada worker Fahra Automation; aplikasi Arker terpisah.
 
-## Cara tulisan dibuat
+## Alur deskripsi baru
 
-1. Enam frame, transkrip, dan caption sumber menjadi bahan pengamatan. AI mencatat bukti, nada, dan confidence. Keterangan sumber dan transkrip dapat keliru; keduanya tidak menjadi instruksi bagi model.
-2. Editor memilih satu detail atau reaksi untuk hook dan caption bersama. Sasaran hook 3–7 kata, satu string tanpa newline, dengan 1–2 baris visual. Batas keras tetap 60 karakter/10 kata dan glyph harus dapat dirender.
-3. Setelah akun dipilih, persona menyesuaikan pilihan kata dan ritme caption. Caption yang sudah cocok boleh dipertahankan. Tahap ini tidak perlu menulis ulang seluruh urutan adegan atau menyebut semua hal yang tidak diketahui.
-4. Adapter menambahkan kredit `source: @username` dari identitas Instagram terverifikasi, lalu hashtag. YouTube memakai judul dan tags terpisah. Hook dalam video tetap sama pada ketiga tujuan.
+1. Downloader mencocokkan metadata Instagram dengan URL, shortcode, dan pemilik Reel. Caption asli disimpan utuh bersama bukti sumber dan hash. Judul otomatis, nama tampilan, caption MCP yang belum dibuktikan, frame, dan transkrip tidak menjadi pengganti caption asli.
+2. Satu tahap AI menulis ulang caption tersebut dengan perubahan ringan. Hasil yang sudah enak dibaca boleh dipertahankan. Maksud, nada, angka, nama, negasi, dan ketidakpastian sumber tetap dijaga; model tidak menambah reaksi, cerita, atau penjelasan adegan.
+3. TikTok, Facebook, dan YouTube memakai hasil bersama. Pemilihan akun tidak memicu rewrite persona lagi. YouTube tetap memiliki judul tersendiri yang merangkum caption yang sama.
+4. Adapter menambahkan `source: @username` dari pemilik terverifikasi, lalu hashtag sumber yang dipilih. Batas karakter diperiksa sesudah kredit ditambahkan.
 
-Contoh arah tulisan berikut dibuat untuk dokumentasi, bukan hasil pengujian model:
+Caption asli diperlakukan sebagai data, termasuk jika isinya memerintah AI mengabaikan aturan. Model tidak boleh mengaku sebagai pemilik, perekam, atau orang yang mengalami kejadian dalam caption sumber. Cerita orang pertama perlu ditulis sebagai cerita dari sumber bila identitas pembicara dapat tertukar. Pemakaian bahasa santai mengikuti nada caption, tanpa memaksakan slang, lelucon, atau emoji.
 
-| Bukti | Arah yang diinginkan |
-| --- | --- |
-| Gelas diisi hingga dekat tepi | “Ini ngangkatnya harus pelan-pelan.” |
-| Kucing tetap masuk ke kardus kecil | “Kardusnya kecil, niat masuknya besar.” |
-| Petugas menuntun warga melewati genangan | “Warga dibantu melewati genangan.” |
+Caption kosong yang terkonfirmasi menghasilkan kredit sumber saja. Caption tanpa narasi, seperti emoji, hashtag, URL, mention, atau angka saja, diproses tanpa panggilan AI. Emoji, mention, dan angka dipertahankan; URL serta baris kredit lama dibuang, dan maksimal lima hashtag sumber dipisahkan. Jika tidak ada isi deskripsi yang tersisa, keluaran cukup kredit sumber beserta hashtag yang tersedia. Judul kasus ini adalah `Video dari Instagram`, bukan dugaan isi video. Metadata hilang, bentuk caption tidak valid, atau pemilik/shortcode yang berbeda menahan proses; kondisi ini tidak dianggap caption kosong.
 
-Bahasa santai boleh memakai singkatan, reaksi, humor ringan, dan emoji bila sesuai. Semuanya pilihan, bukan kewajiban pada setiap caption. Persona formal tetap formal. Konten serius memakai bahasa tenang; model tidak boleh mengarang penyebab, identitas, pengalaman pribadi, cedera, atau hasil akhir.
-
-Ketidakpastian tetap disimpan dalam catatan bukti. Jika caption tidak membahas penyebab kejadian, tidak perlu menambahkan “pemicunya belum jelas”. Jika klaim yang dipilih memang belum pasti, pembatas tetap diperlukan atau model memilih detail lain yang jelas.
+Frame dan transkrip tetap dapat disiapkan serta disimpan untuk kebutuhan konteks reply. Kedua bahan itu tidak dikirim sebagai bahan rewrite deskripsi. `confidence_kind=source_fidelity` menilai kesetiaan tulisan pada caption, bukan kebenaran klaim sumber atau pemahaman video.
 
 ## Pemeriksaan dan batasnya
 
-Pemeriksaan mencakup format, panjang, glyph, pola pancingan umum, rangkuman adegan yang berlebihan, nada serius, dan pengulangan persis. Setiap tahap mempunyai paling banyak satu perbaikan. Bukti pengamatan yang sudah valid dikunci saat perbaikan gaya; confidence tidak boleh dinaikkan.
+Caption hasil maksimal 1.800 karakter, judul satu baris maksimal 100 karakter. Hashtag boleh kosong, maksimal lima, dan hanya berasal dari caption Instagram. Validator menolak tambahan angka atau mention, angka sumber yang hilang, URL dan kredit sumber buatan, serta teks hook. Bukti caption terikat ke sumber yang sama dan hash diperiksa kembali sebelum metadata tujuan disiapkan.
 
-Caption akun menerima maksimal delapan caption yang pernah disiapkan untuk akun yang sama. Riwayat ini hanya pembanding bahasa, bukan sumber fakta atau bukti publikasi. Kiriman saat ini, video yang sama, akun lain, dan metadata dari binding akun lama dikecualikan.
+AI mendapat paling banyak satu kesempatan memperbaiki format atau kesetiaan teks pada tahap yang sama. Confidence di bawah 0,8 ditahan; perbaikan tidak boleh menaikkannya. Kesalahan tidak ditutup dengan caption generik. Caption tanpa narasi menggunakan hasil deterministik sesuai sumber, sehingga tidak membutuhkan perbaikan AI.
 
-Pemeriksaan pola bukan verifikasi fakta dan tidak menjamin semua kalimat akan terasa natural. Preview manusia tetap menilai kecocokan tulisan dengan video. Hasil yang gagal tidak diganti caption generik hanya agar antrean terlihat berhasil.
+Pemeriksaan struktur dan angka tidak membuktikan semua makna dipertahankan. Preview manusia tetap membandingkan caption sumber dengan hasil rewrite. Satu contoh yang lulus juga tidak menjamin setiap hasil berikutnya akan terasa natural.
 
-## Versi persona dan kiriman lama
+## Video baru dan antrean lama
 
-Persona berada di worker lokal dan terikat ke ID akun Repliz. Default baru bernama **Indonesia natural**. Saat binding default lama dibaca untuk pemrosesan berikutnya, profil yang persis cocok dengan isi dan hash default lama mendapat versi baru. Pengulangan proses tidak menambah versi lagi.
+Renderer baru tidak menambah overlay pada detik berapa pun. Orientasi sumber tetap, zoom 110%, output 30 fps, H.264/AAC, dan audio asli dipertahankan. Catatan render menyimpan `hook_enabled=false` dan `hook_seconds=0`. Nilai hook lama pada config tidak mengaktifkan overlay. [HOOK_VISUAL.md](HOOK_VISUAL.md) menyimpan gaya lama sebagai arsip; font tetap dipakai laporan followers.
 
-Persona khusus, termasuk yang memakai nama sama tetapi instruksinya berbeda, tidak ditimpa. Versi lama tetap tersimpan. Caption tujuan yang sudah disiapkan tetap menggunakan snapshot sebelumnya selama bukti dan akun tidak berubah; jadwal ber-intent atau sudah terbit tidak ditulis ulang.
+Asset yang sudah diunduh atau sudah dianalisis dengan kebijakan lama tetapi belum dirender mengambil bukti caption dan menghasilkan rewrite baru sebelum render pertama. Asset yang sudah dirender atau masuk Bank/Drive tidak dirender ulang otomatis. Intent, jadwal, publikasi, dan body pengiriman yang sudah tersimpan tetap dipertahankan. Perubahan ini tidak mengirim ulang posting lama.
 
-Default lama maupun baru tetap dikenali sebagai keluarga default pada generator reply. Profil reply Gen Z, aturan variasi hint, kuota, deduplikasi, dan draft tersimpan tetap mengikuti jalur yang ada.
+Jalur `id-natural-v4` tetap tersedia untuk metadata dan arsip lama yang membutuhkannya. Pada jalur lama, caption tujuan dapat terikat ke snapshot persona akun dan riwayat caption menjadi pembanding bahasa. Aturan tersebut tidak menambah tahap persona pada rewrite sumber baru.
 
-Native reply Repliz tetap nonaktif pada posting yang dimiliki worker custom. Perubahan bahasa ini tidak membuat pengirim reply kedua atau mengganti konfigurasi like/moderasi.
+## Persona dan balasan
 
-## Pemasangan dan bukti
+Registry persona lokal tetap terikat ke ID akun Repliz dengan versi immutable. Default Indonesia natural dan persona khusus tetap tersedia untuk reply. Caption baru tidak memakai instruksi persona akun untuk mengubah isinya.
 
-Perubahan kode memerlukan restart layanan Fahra setelah verifier full, preview AI/media terisolasi, dan CI lulus. Kontrol operasi awal dicatat, reply dijeda, backup dibuat, lalu hanya layanan yang berubah diperbarui. Snapshot startup harus lengkap sebelum kontrol dipulihkan.
+Reply tetap memakai konteks video, transkrip, komentar, dan percakapan induk. Confidence kesetiaan rewrite tidak boleh dipakai sebagai confidence konteks reply. Profil default Gen Z, variasi hint, kuota, deduplikasi, dan draft tersimpan mengikuti jalur reply yang ada. Konten serius memakai bahasa tenang; fakta yang tidak diketahui tidak dikarang.
 
-Preview memakai salinan media dan runtime sendiri. Tidak membuat jadwal, posting, balasan, atau pesan Telegram. Hasil fixture, keluaran model nyata, dan render lokal dicatat terpisah pada `runtime/verification/natural-copy-20261020/`.
+Native reply Repliz tetap nonaktif pada posting milik worker custom. Kepemilikan reply, like, moderasi, dan larangan like komentar YouTube tidak berubah.
+
+## Pemeriksaan dan pemasangan
+
+Perubahan kode memerlukan verifier full, preview AI/media terisolasi, CI pada SHA tepat, lalu pemasangan dan restart layanan yang berubah. Kontrol awal dicatat, lease diselesaikan, backup dibuat, dan snapshot startup diperiksa sebelum kontrol dipulihkan. Preview tidak membuat jadwal, posting, balasan, atau pesan Telegram.
+
+Pada checkpoint dokumentasi ini, dua pembacaan metadata Instagram nyata dan 51 tes terarah attribution/downloader/foundation sudah lulus. Preview media nyata/sintetis beserta 10 tes media juga lulus; suite terarah gabungan mencapai 76 tes PASS. Preview AI memakai dua caption nyata: satu caption narasi selesai dalam 6,908 detik dengan satu panggilan model, sedangkan satu emoji dipertahankan dalam 0,013 detik tanpa AI. Ketiga payload fixture memakai deskripsi/kredit yang sama, dengan nol panggilan AI tambahan saat delivery. Kata ketidakpastian pada caption narasi tetap dipertahankan.
+
+Preview ini membuat nol request publikasi, reply, atau Drive dan tidak mengakses DB produksi. Hasilnya membuktikan dua contoh rewrite dan payload fixture, bukan publikasi atau jaminan kualitas semua caption. Angka tes penuh serta status pemasangan tidak disimpulkan dari suite terarah. Bukti tugas disimpan di `runtime/verification/caption-rewrite-no-hook-20261021/`, dengan salinan bukti worktree pada `worktree-verification/`. Commit, CI, pemasangan, dan pembersihan mengikuti `final-git.json` di folder tersebut.
+
+Bukti kebijakan sebelumnya tetap berada di `runtime/verification/natural-copy-20261020/`.

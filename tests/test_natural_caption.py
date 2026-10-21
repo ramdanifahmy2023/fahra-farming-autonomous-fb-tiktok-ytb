@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import httpx
 
 from fahra_automation.analysis import Analyzer, LowConfidenceError
-from fahra_automation.captioning import EDITOR_PROMPT, POLICY_VERSION, SYSTEM_PROMPT, editorial_issues
+from fahra_automation.captioning import EDITOR_PROMPT, LEGACY_POLICY_VERSION, SYSTEM_PROMPT, editorial_issues
 from fahra_automation.config import Config
 from fahra_automation.db import Store
 
@@ -41,7 +41,7 @@ class NaturalCaptionTest(unittest.IsolatedAsyncioTestCase):
     async def shared(self, outputs):
         transport, requests = self.transport(outputs)
         async with httpx.AsyncClient(base_url='https://example.test/', transport=transport) as client:
-            result = await self.analyzer.generate(client, self.job, [], '', self.folder / 'shared')
+            result = await self.analyzer.generate_legacy(client, self.job, [], '', self.folder / 'shared')
         return result, requests
 
     async def delivery(self, outputs, persona=None):
@@ -149,4 +149,4 @@ class NaturalCaptionTest(unittest.IsolatedAsyncioTestCase):
     def test_natural_does_not_mean_uncertain_claims_become_certain(self):
         self.assertIn('jangan dibuat pasti', SYSTEM_PROMPT)
         self.assertIn('bukan kata pembatas yang diperlukan', EDITOR_PROMPT)
-        self.assertEqual(POLICY_VERSION, 'id-natural-v4')
+        self.assertEqual(LEGACY_POLICY_VERSION, 'id-natural-v4')

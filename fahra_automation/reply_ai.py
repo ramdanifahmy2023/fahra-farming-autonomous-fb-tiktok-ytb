@@ -14,6 +14,7 @@ import httpx
 
 from .comment_profiles import save
 from .media import Media
+from .captioning import REWRITE_POLICY_VERSION
 from .personas import DEFAULT_PROFILE, digest, is_default_profile
 
 CONTEXT_VERSION = 'video-context-v1'
@@ -182,14 +183,15 @@ class ReplyAI:
                                                  cache, 6, False)
         if len(frames) != 6 or any(not p.is_file() for p in frames):
             raise ValueError('Konteks reply memerlukan tepat enam frame bukti.')
+        rewrite_only = payload.get('caption_policy_version') == REWRITE_POLICY_VERSION
         content = [{'type': 'text', 'text': json.dumps({'source_caption': payload.get('source_caption', '')[:6000],
             'transcript': payload.get('transcript', '')[:16000],
-            'shared_observations': payload.get('caption_review', {})}, ensure_ascii=False)}]
+            'shared_observations': {} if rewrite_only else payload.get('caption_review', {})}, ensure_ascii=False)}]
         content += [{'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,' + base64.b64encode(p.read_bytes()).decode()}}
                     for p in frames]
         result = await self.generate(CONTEXT_PROMPT, content, validate_context, folder, 'context')
         initial_confidence = payload.get('caption_review', {}).get('confidence')
-        if isinstance(initial_confidence, (float, int)) and not isinstance(initial_confidence, bool):
+        if not rewrite_only and isinstance(initial_confidence, (float, int)) and not isinstance(initial_confidence, bool):
             result['confidence'] = min(result['confidence'], initial_confidence)
             if result['confidence'] < .6:
                 result['quality'] = 'needs_review'

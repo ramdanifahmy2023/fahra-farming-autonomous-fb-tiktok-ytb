@@ -499,6 +499,30 @@ class ReplyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({c['account_id'] for c in contexts}, {'tiktok-account', 'facebook-account', 'youtube-account'})
         self.assertTrue(all(c['quality'] == 'needs_review' and c['confidence'] == .55 for c in contexts))
 
+    async def test_source_rewrite_fidelity_does_not_become_video_confidence(self):
+        from fahra_automation.captioning import REWRITE_POLICY_VERSION
+        frames = []
+        for i in range(6):
+            path = self.folder / ('source-frame-' + str(i) + '.jpg')
+            path.write_bytes(b'frame-fixture')
+            frames.append(str(path))
+        for score in (.3, .95):
+            with self.subTest(video_confidence=score):
+                ai = ReplyAI(self.config)
+                observed = copy.deepcopy(CONTEXT)
+                observed.update(confidence=score, quality='needs_review' if score < .6 else 'usable')
+                ai.generate = AsyncMock(return_value=observed)
+                job = {'asset_id': 'rewrite-' + str(score), 'id': 'job', 'account_id': 'account',
+                       'payload': {'analysis_frames': frames, 'post_id': 'post', 'source_caption': 'Klaim penulis.',
+                           'caption_policy_version': REWRITE_POLICY_VERSION,
+                           'caption_review': {'confidence': .85, 'confidence_kind': 'source_fidelity'}}}
+                result = await ai.context(job, self.folder / ('reply-' + str(score)))
+                self.assertEqual(result['confidence'], score)
+                self.assertEqual(result['quality'], observed['quality'])
+                evidence = json.loads(ai.generate.call_args.args[1][0]['text'])
+                self.assertEqual(evidence['shared_observations'], {})
+                self.assertEqual(evidence['source_caption'], 'Klaim penulis.')
+
     async def test_custom_persona_replaces_default_genz_prompt_and_records_version(self):
         ai = ReplyAI(self.config)
         ai.generate = AsyncMock(return_value=copy.deepcopy(DRAFT))

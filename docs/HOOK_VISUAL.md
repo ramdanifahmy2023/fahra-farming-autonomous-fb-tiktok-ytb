@@ -1,6 +1,18 @@
-# Tampilan hook video
+# Render tanpa hook dan arsip gaya lama
+
+Permintaan terbaru 21 Oktober 2026 menghilangkan visual hook sepenuhnya. Renderer baru tidak menambah teks atau kartu pada detik berapa pun. Orientasi sumber tetap, zoom 110%, output 30 fps, H.264/AAC, serta audio asli dipertahankan. Caption/deskripsi mengikuti [rewrite caption Instagram](COPY_AND_PERSONA.md).
+
+Render baru menyimpan `edits.hook_enabled=false` dan `edits.hook_seconds=0`. Default `video.hook_seconds=0`; renderer mengabaikan nilai hook lama yang mungkin masih ada pada konfigurasi lokal. Render baru tidak membuat `hook.txt`, `hook.png`, atau `hook-layout.json`.
+
+Asset downloaded atau analyzed lama yang belum dirender memakai caption sumber sebelum render pertama. Video yang sudah dirender, masuk Bank/Drive, memiliki intent, terjadwal, atau terbit tidak direvisi atau dikirim ulang otomatis. Font Barlow, lisensi, dan kode pendukung arsip tetap disimpan karena laporan followers dan pengujian arsip masih memakainya.
+
+Pemeriksaan baru membuktikan tidak ada input/filter overlay, hook yang dikirim pemanggil tidak tampil, serta orientasi, zoom, audio dan 30 fps tetap sesuai. Preview media nyata/sintetis terisolasi dan 10 tes media lulus tanpa publikasi. Bukti akhir kode, pengujian gabungan, pemasangan dan cleanup mengikuti `runtime/verification/caption-rewrite-no-hook-20261021/final-git.json`; preview tidak menjadi bukti deployment.
+
+## Gaya 16 Oktober 2026 (arsip)
 
 Permintaan pengguna 16 Oktober 2026: perbaiki font dan visual teks pembuka. Gaya `barlow-balanced-v1` mengikuti video singkat berbahasa Indonesia dengan nada santai yang sudah dipilih pengguna. Arah visual: huruf tegas, komposisi ringkas, tanpa animasi tambahan (energy 2, rhythm 2, motion 1). Penekanan berasal dari tipografi; gambar video tetap menjadi isi utama.
+
+Bagian di bawah mencatat kontrak dan hasil pengujian versi tersebut. Instruksi hook tiga detik tidak berlaku untuk render baru setelah perubahan 21 Oktober.
 
 ## Aturan tampilan
 

@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from fahra_automation.analysis import Analyzer, LowConfidenceError
-from fahra_automation.captioning import POLICY_VERSION, editorial_issues
+from fahra_automation.attribution import caption_from_metadata, from_metadata
+from fahra_automation.captioning import LEGACY_POLICY_VERSION, editorial_issues
 from fahra_automation.caption_audit import audit
 from fahra_automation.config import Config
 from fahra_automation.db import Store
@@ -58,14 +59,14 @@ class CaptionTest(unittest.IsolatedAsyncioTestCase):
             raw = response if isinstance(response, str) else json.dumps(response)
             return httpx.Response(200, json={"choices": [{"message": {"content": raw}}]})
         async with httpx.AsyncClient(base_url="https://example.test/", transport=httpx.MockTransport(handle)) as client:
-            result = await self.analyzer.generate(client, self.job, [], "musik kurang jelas", self.folder, recent)
+            result = await self.analyzer.generate_legacy(client, self.job, [], "musik kurang jelas", self.folder, recent)
         return result, requests
 
     async def test_two_stages_keep_source_untrusted_and_editor_confidence_fixed(self):
         history = [{"hook": "Hook lama", "caption": "Caption lama."}]
         result, requests = await self.invoke([self.good, {**self.good, "confidence": 1}], history)
         self.assertEqual(len(requests), 2)
-        self.assertEqual(result["caption_policy_version"], POLICY_VERSION)
+        self.assertEqual(result["caption_policy_version"], LEGACY_POLICY_VERSION)
         self.assertEqual(result["caption_review"]["attempts"], 2)
         self.assertEqual(result["caption_review"]["confidence"], .9)
         system, user = requests[0]["messages"]
@@ -148,21 +149,65 @@ class CaptionTest(unittest.IsolatedAsyncioTestCase):
         store.enqueue(1, 2, 3, [("https://instagram.com/reel/abc/", "abc")], can_allocate=False)
         job = store.job(store.queue()[0]["id"])
         store.checkpoint(job["id"], "published", payload={"generated": self.good})
-        frames = runtime / "media" / job["asset_id"] / "analysis"
-        frames.mkdir(parents=True)
-        (frames / "frame-0.jpg").write_bytes(b"fixture")
         before = store.path.read_bytes()
         config = Config(self.folder, {"workflow": {"runtime_dir": str(runtime)},
                                       "ai": {"base_url": "https://example.test/", "model": "test"}})
         output = self.folder / "audit"
+        proof = caption_from_metadata(job['url'], {'id': job['source_id'], 'extractor_key': 'Instagram',
+                                                 'channel': 'fixture_owner', 'description': 'Caption sumber.'})
         with patch.object(Config, "ai_key", return_value="test-key"), patch(
+                "fahra_automation.caption_audit.Downloader.inspect_source", new_callable=AsyncMock,
+                return_value=proof) as inspect, patch(
                 "fahra_automation.caption_audit.Analyzer.generate", new_callable=AsyncMock,
-                return_value={"generated": self.good, "caption_review": {"attempts": 2}}):
+                return_value={"generated": self.good, "caption_review": {"attempts": 2}}) as generate:
             report = await audit(config, [job["id"]], output)
+        inspect.assert_awaited_once_with(job['url'])
+        self.assertEqual(report['results'][0]['status'], 'generated')
+        self.assertEqual(report['results'][0]['source_caption'], 'Caption sumber.')
+        self.assertEqual(generate.call_args.args[1]['payload']['source_caption'], 'Caption sumber.')
+        self.assertEqual(generate.call_args.args[2:4], ([], ''))
         self.assertFalse(report["published"])
         self.assertEqual(store.path.read_bytes(), before)
+        self.assertFalse((runtime / 'attempts').exists())
         with self.assertRaisesRegex(ValueError, "folder audit baru"):
             await audit(config, [job["id"]], output)
+
+    async def test_audit_preserves_verified_proof_and_rejects_tampering_or_changed_owner(self):
+        runtime = self.folder / 'runtime'
+        store = Store(runtime / 'workflow.sqlite3')
+        url = 'https://www.instagram.com/reel/AuditProof/'
+        store.enqueue(1, 2, 3, [(url, 'AuditProof')], can_allocate=False)
+        job = store.queue()[0]
+        proof = caption_from_metadata(url, {'id': 'AuditProof', 'extractor_key': 'Instagram',
+                                           'channel': 'fixture_owner', 'description': 'Caption asli.'})
+        changed = caption_from_metadata(url, {'id': 'AuditProof', 'extractor_key': 'Instagram',
+                                             'channel': 'changed_owner', 'description': 'Caption asli.'})
+        config = Config(self.folder, {'workflow': {'runtime_dir': str(runtime)},
+                                      'ai': {'base_url': 'https://example.test/', 'model': 'test'}})
+        for mode in ('valid', 'tampered', 'changed_owner'):
+            payload = {**proof, 'source_caption': 'Diubah.' if mode == 'tampered' else proof['source_caption']}
+            if mode == 'changed_owner':
+                payload = from_metadata(url, {'id': 'AuditProof', 'extractor_key': 'Instagram', 'channel': 'fixture_owner'})
+            with store.tx() as connection:
+                connection.execute('UPDATE jobs SET payload=? WHERE id=?', (json.dumps(payload), job['id']))
+            before = store.path.read_bytes()
+            with self.subTest(mode=mode), patch.object(Config, 'ai_key', return_value='test-key'), patch(
+                    'fahra_automation.caption_audit.Downloader.inspect_source', new_callable=AsyncMock,
+                    return_value=changed) as inspect, patch(
+                    'fahra_automation.caption_audit.Analyzer.generate', new_callable=AsyncMock,
+                    return_value={'generated': self.good, 'caption_review': {}}) as generate:
+                report = await audit(config, [job['id']], self.folder / mode)
+                self.assertEqual(report['results'][0]['status'], 'generated' if mode == 'valid' else 'needs_review')
+                if mode == 'valid':
+                    inspect.assert_not_awaited()
+                    generate.assert_awaited_once()
+                else:
+                    generate.assert_not_awaited()
+                    if mode == 'tampered':
+                        inspect.assert_not_awaited()
+                    else:
+                        inspect.assert_awaited_once_with(url)
+            self.assertEqual(store.path.read_bytes(), before)
 
     def test_recent_captions_survive_reopen_and_deduplicate_platforms(self):
         db = self.folder / "test.sqlite3"

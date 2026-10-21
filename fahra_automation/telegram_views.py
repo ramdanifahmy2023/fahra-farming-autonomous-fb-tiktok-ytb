@@ -121,9 +121,18 @@ def html_options(rows=None):
     return {"parse_mode": "HTML", "reply_markup": {"inline_keyboard": rows or []}}
 
 
+def video_title(payload):
+    metadata = payload.get('delivery_metadata') or {}
+    generated = payload.get('generated') or {}
+    for value in (metadata.get('title'), generated.get('title'), generated.get('hook')):
+        if isinstance(value, str) and value.strip():
+            return e(value.strip(), 100)
+    return ''
+
+
 def publication(job):
     p = job["payload"]
-    title = e(p.get("generated", {}).get("hook"), 100)
+    title = video_title(p)
     text = f"<b>Video sudah terbit di {platform_name(job)}</b>\n{e(p.get('published_username'), 60)}\n"
     if title:
         text += "\n" + title + "\n"
@@ -203,9 +212,9 @@ def batch(batch, jobs, paused=False):
         rows.append([callback("Kembali ke ringkasan", 0)])
     elif reel_count == 1:
         j = max(jobs, key=lambda item: STAGE_INDEX.get(item['status'], STAGE_INDEX.get(item['payload'].get('resume_status'), 0)))
-        hook = j["payload"].get("generated", {}).get("hook")
-        if hook:
-            lines.append("\n" + e(hook, 100))
+        title = video_title(j['payload'])
+        if title:
+            lines.append("\n" + title)
         index = STAGE_INDEX.get(j['status'], STAGE_INDEX.get(j['payload'].get('resume_status'), 0))
         lines.append("\n" + ("Persiapan video selesai." if index >= 4 else
                      f"Persiapan {index + 1}/4 · {e(STAGES[index])}"))

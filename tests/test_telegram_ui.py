@@ -189,6 +189,29 @@ class TelegramUITest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Menunggu salinan Google Drive", text)
         self.assertNotIn("konfigurasi", text)
 
+    def test_rewrite_title_is_visible_and_escaped_in_batch_and_publication(self):
+        batch, jobs = self.store.progress_snapshot(self.enqueue())
+        for job in jobs:
+            job['payload']['generated'] = {'hook': '', 'title': 'Judul bersama <baru> & aman'}
+            job['payload']['post_url'] = 'https://example.test/post'
+        text, _, _ = views.batch(batch, jobs)
+        self.assertIn('Judul bersama &lt;baru&gt; &amp; aman', text)
+        ValidHTML(text)
+        jobs[0]['payload']['delivery_metadata'] = {'title': 'Judul tujuan <satu>'}
+        text, _ = views.publication(jobs[0])
+        self.assertIn('Judul tujuan &lt;satu&gt;', text)
+        self.assertNotIn('Judul bersama', text)
+        ValidHTML(text)
+
+    def test_title_fallback_preserves_legacy_hook_and_skips_blank_titles(self):
+        for payload, expected in [
+                ({'generated': {'hook': 'Hook lama'}}, 'Hook lama'),
+                ({'delivery_metadata': {'title': '  '}, 'generated': {'title': 'Judul baru', 'hook': 'Hook lama'}}, 'Judul baru'),
+                ({'delivery_metadata': {'title': None}, 'generated': {'title': '', 'hook': '<arsip>'}}, '&lt;arsip&gt;'),
+                ({'generated': {'hook': ''}}, '')]:
+            with self.subTest(payload=payload):
+                self.assertEqual(views.video_title(payload), expected)
+
     def test_empty_duplicate_batch_and_paused_state(self):
         self.enqueue()
         result = self.store.enqueue(77, 77, 2, [("https://instagram.com/reel/test1_0/", "test1_0")], progress=True)

@@ -97,9 +97,57 @@ def require_attribution(job):
     return identity
 
 
-def credit_description(description, identity, limit):
+def caption_from_metadata(url, metadata):
+    attribution = from_metadata(url, metadata)
+    raw = metadata.get('_fahra_caption')
+    field, representation = 'description', 'text'
+    if '_fahra_caption' in metadata:
+        if not isinstance(raw, dict):
+            raise ConfigurationError('Bukti caption Instagram tidak valid.')
+        representation = raw.get('representation')
+        if representation == 'null' and raw.get('field') == 'caption':
+            if metadata.get('description') not in (None, ''):
+                raise ConfigurationError('Caption Instagram kosong bertentangan dengan metadata.')
+            caption, field = '', 'caption'
+        elif representation == 'text' and raw.get('field') == 'caption.text':
+            caption = raw.get('text')
+            if not isinstance(caption, str) or metadata.get('description') != caption:
+                raise ConfigurationError('Isi caption Instagram tidak cocok dengan metadata sumber.')
+        else:
+            raise ConfigurationError('Caption asli Instagram belum tersedia; deskripsi ditahan tanpa menebak.')
+    else:
+        caption = metadata.get('description')
+        if not isinstance(caption, str):
+            raise ConfigurationError('Caption asli Instagram belum tersedia; deskripsi ditahan tanpa menebak.')
+    owner = attribution['source_attribution']
+    proof = {key: owner[key] for key in ('version', 'provider', 'source_id', 'source_url',
+                                        'username', 'metadata_sha256', 'verified_at')}
+    proof.update({'field': field, 'representation': representation,
+                  'status': 'present' if caption.strip() else 'empty',
+                  'content_sha256': hashlib.sha256(caption.encode()).hexdigest()})
+    return {**attribution, 'source_caption': caption, 'source_caption_provenance': proof}
+
+
+def require_source_caption(job):
+    identity = require_attribution(job)
+    payload = job.get('payload', {})
+    proof, caption = payload.get('source_caption_provenance'), payload.get('source_caption')
+    owner = payload['source_attribution']
+    if (not isinstance(caption, str) or not isinstance(proof, dict)
+            or proof.get('version') != 1 or proof.get('provider') != 'yt-dlp:Instagram'
+            or proof.get('username') != identity
+            or any(proof.get(key) != owner.get(key) for key in ('source_id', 'source_url', 'metadata_sha256'))
+            or (proof.get('field'), proof.get('representation')) not in {('description', 'text'), ('caption', 'null')}
+            or proof.get('representation') == 'null' and caption != ''
+            or proof.get('status') != ('present' if caption.strip() else 'empty')
+            or proof.get('content_sha256') != hashlib.sha256(caption.encode()).hexdigest()):
+        raise ConfigurationError('Bukti caption asli Instagram belum cocok; deskripsi ditahan tanpa menebak.')
+    return caption
+
+
+def credit_description(description, identity, limit, *, allow_empty=False):
     identity = username(identity)
-    if not isinstance(description, str) or not description.strip():
+    if not isinstance(description, str) or not description.strip() and not allow_empty:
         raise ValueError('Caption/deskripsi publikasi kosong.')
     credit = 'source: @' + identity
     lines = description.strip().splitlines()

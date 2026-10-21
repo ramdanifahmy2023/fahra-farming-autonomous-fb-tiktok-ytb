@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import ConfigurationError
+from .attribution import require_attribution, require_source_caption
+from .captioning import REWRITE_POLICY_VERSION
 from .db import ZONE, AssetStore, PREPARE
 from .downloader import DownloadUncertain, DownloadFailed
 from .repliz import AccountUnavailable, MutationNotSent, ReplizError, account_id, publication_details, timestamp, api_scope
@@ -199,6 +201,18 @@ class Pipeline:
             if shutil.disk_usage(path).free < minimum:
                 raise ConfigurationError('Ruang disk media/bank/database kurang. Persiapan menunggu ruang tersedia.')
 
+    async def source_caption(self, job, media_store):
+        if 'source_caption_provenance' in job['payload']:
+            require_source_caption(job)
+            return job
+        proof = await self.downloader.inspect_source(job['url'])
+        enriched = {**job, 'payload': {**job['payload'], **proof}}
+        require_source_caption(enriched)
+        if job['payload'].get('source_attribution') and require_attribution(job) != require_attribution(enriched):
+            raise ConfigurationError('Pemilik sumber berubah saat memeriksa caption Instagram.')
+        media_store.checkpoint(job['id'], payload=proof)
+        return self.store.asset(job['id'])
+
     async def prepare(self, delivery):
         self.require_free_space()
         media_store = AssetStore(self.store)
@@ -220,9 +234,11 @@ class Pipeline:
                 media_store.checkpoint(sid, "duplicate")
                 return
             media_store.checkpoint(sid, "downloaded", payload={**result, "source_probe": info, "source_sha256": digest})
-        elif state == "downloaded":
+        elif state == "downloaded" or (state == "analyzed"
+                and job['payload'].get('caption_policy_version') != REWRITE_POLICY_VERSION):
             info = job['payload'].get('source_probe') or await self.local_stage(self.media.probe, job['payload']['source_path'])
             self.media.validate_shared(info)
+            job = await self.source_caption(job, media_store)
             result = await self.analyzer.analyze(job, folder / "analysis", recent_captions=self.store.recent_captions(sid))
             media_store.checkpoint(sid, "analyzed", payload=result)
         elif state == "analyzed":
@@ -232,7 +248,7 @@ class Pipeline:
             media_store.checkpoint(sid, "rendered", payload={"render_path": str(target), "render_probe": info,
                                                            "render_sha256": await self.local_stage(digest_file, target),
                                                            "edits": {"mirror": False, "zoom_percent": 110,
-                                                                     "hook_seconds": self.config.section('video')['hook_seconds']}})
+                                                                     "hook_enabled": False, "hook_seconds": 0}})
         elif state == "rendered":
             result = await self.local_stage(self.drive.upload, job, media_store)
             media_store.checkpoint(sid, "drive_ready", payload=result)

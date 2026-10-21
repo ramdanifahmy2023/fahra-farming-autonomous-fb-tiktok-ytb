@@ -105,8 +105,11 @@ class PersonaService:
 
     @staticmethod
     def evidence_hash(payload):
-        return digest({k: payload.get(k) for k in
-                       ('source_sha256', 'render_sha256', 'generated', 'caption_review', 'transcript')})
+        from .captioning import REWRITE_POLICY_VERSION
+        keys = ('source_sha256', 'render_sha256', 'generated', 'caption_review', 'transcript')
+        if payload.get('caption_policy_version') == REWRITE_POLICY_VERSION:
+            keys += ('caption_policy_version', 'source_caption', 'source_caption_provenance', 'source_attribution')
+        return digest({k: payload.get(k) for k in keys})
 
     def save_candidate(self, job, metadata):
         with self.store.tx() as connection:
