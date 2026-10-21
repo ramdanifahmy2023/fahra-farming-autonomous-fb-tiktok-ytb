@@ -58,7 +58,7 @@ Pemeriksaan ruang kosong mencakup volume DB, runtime media, bank, dan downloader
 
 ## Bukti yang masih harus ditutup
 
-Verifikasi gabungan 572 tes, CI pada SHA tepat, merge ff-only, push main, relokasi DB, dan startup produksi sudah lulus. Aktivasi endpoint/token pada akun Repliz masih menunggu Save oleh pengguna. Penutupan tercatat di worklog dan manifest runtime. Verifier penuh yang dipakai:
+Verifikasi gabungan 572 tes, CI pada SHA tepat, merge ff-only, push main, relokasi DB, dan startup produksi sudah lulus. Save endpoint/token pada Repliz masih tertunda pada checkpoint pemasangan 11:09 WIB, lalu selesai sekitar 13:06 WIB sebagaimana bukti aktivasi di bawah. Penutupan tercatat di worklog dan manifest runtime. Verifier penuh yang dipakai:
 
 ```sh
 ./scripts/verify.sh --mode full --base origin/main --secrets-from PATH_CREDENTIAL
@@ -72,3 +72,9 @@ Preview nyata di atas sudah memeriksa jalur persona dan Drive yang berubah. Ia b
 Commit `4a2b3d14e5a6dd2559cd3c5e3878f90b7752814a` lulus [CI branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39541965377) dan [CI main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/39542238861). Main digabung ff-only, diverifikasi penuh lagi, dan SHA remote cocok. Backup bundle sebelum/sesudah relokasi lulus. Fingerprint semua tabel sumber dan tujuan cocok; 1.505 jobs, 607 assets, 583 batches, 2.271 comment events, 427 reply attempts, dan 19 report parts tidak berubah oleh relokasi.
 
 DB aktif berada pada penyimpanan internal melalui pointer; schema v3 aktif. Runtime media, bank, jurnal, ownership, dan lock mempertahankan lokasi operasional sebelumnya. Startup siap pada 11:09:35 WIB, PID 12528. Kontrol dikembalikan ke paused=false, reply/report aktif. Pemeriksaan awal menunjukkan snapshot segar dan tidak ada event failure baru sejak resume. Uji endpoint produksi menghasilkan 401/200. Ini belum menjadi bukti bahwa Repliz sudah mengirim event nyata atau bahwa durasi input-ke-published sudah memenuhi target audit.
+
+## Aktivasi webhook Repliz
+
+Pengguna meminta agent menyelesaikan aktivasi. Sekitar 13:06 WIB pada 21 Oktober, Save di Repliz menghasilkan `Success: Webhook saved`, lalu reload mempertahankan URL `https://repliz.fahra.my.id/repliz/webhook`. Token yang disimpan adalah nilai integrasi `x-token` yang sudah terpasang pada receiver lokal; tidak ada rotasi token atau perubahan kredensial login. Layanan tidak direstart dan tidak ada publikasi, reply, atau pesan Telegram percobaan.
+
+Health read-only 13:07:25 WIB menunjukkan snapshot segar, paused=false, reply/report aktif, seluruh loop tanpa error atau stale, dan PID 12528 tetap mendengarkan loopback port 8769. Inbox lokal masih memuat satu testing selesai dari pengujian sebelumnya. [Dokumentasi Repliz](https://docs.repliz.com/tutorial/webhook) menyatakan tes Save tidak masuk Delivery history, sehingga toast sukses dan URL tersimpan membuktikan registrasi. Event publikasi/komentar nyata melalui webhook dan perubahan latensi produksi tetap belum dibuktikan. Bukti aktivasi, health, verifier, dan Git disimpan pada `runtime/verification/webhook-activation-20261021/`.
