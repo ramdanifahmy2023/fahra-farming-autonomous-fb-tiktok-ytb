@@ -521,6 +521,13 @@ class SchedulerTest(unittest.TestCase):
         self.assertIsNone(self.store.ensure_slot(job['id'], self.at.date()))
         self.assertIsNone(self.store.job(job['id'])['account_id'])
 
+    def test_allowlist_clears_eligibility_of_missing_historical_page(self):
+        self.store = Store(self.store.path, facebook_publish_account_ids=['facebook-new'])
+        self.sync([account('tiktok'), account('youtube')])
+        historical = next(row for row in self.store.accounts() if row['id'] == 'facebook-0')
+        self.assertFalse(historical['connected'])
+        self.assertFalse(historical['eligible'])
+
     def test_allowlist_rejects_existing_intent_without_rewriting_it(self):
         self.enqueue(required_destinations=['facebook'])
         job = self.jobs('facebook')[0]

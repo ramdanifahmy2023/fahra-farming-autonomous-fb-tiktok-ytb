@@ -353,6 +353,10 @@ class Store:
             c.execute("""INSERT OR REPLACE INTO account_capabilities VALUES(?,?,?,?,?,?,?,?)""",
                       (aid, 'publish', 'ready' if eligible else 'held', 'provider_denied' if denied else evidence or 'missing',
                        identity, prior['observed_at'] if denied else iso(), expires, prior['reason'] if denied else reason))
+        if self.facebook_publish_account_ids is not None:
+            placeholders = ','.join('?' for _ in self.facebook_publish_account_ids)
+            c.execute(f'''UPDATE accounts SET eligible=0 WHERE platform='facebook'
+                AND id NOT IN ({placeholders})''', tuple(self.facebook_publish_account_ids))
         after = {r['id']: dict(r) for r in c.execute('SELECT * FROM accounts')}
         changes = {'added': sorted(set(after) - set(before)),
                    'disconnected': sorted(k for k in before if before[k]['connected'] and not after[k]['connected']),
