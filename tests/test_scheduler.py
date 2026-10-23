@@ -498,3 +498,47 @@ class SchedulerTest(unittest.TestCase):
         job = self.jobs()[0]
         self.store.checkpoint(job['id'], 'published', schedule_id='remote-1')
         self.assertEqual(self.store.publications_to_report()[0]['username'], 'user0')
+
+    def test_facebook_allowlist_blocks_rotation_and_submission(self):
+        allowed = 'facebook-allowed'
+        blocked = 'facebook-blocked'
+        self.store = Store(self.store.path, facebook_publish_account_ids=[allowed])
+        accounts = [account('tiktok'), account('youtube'), account('facebook', id=allowed),
+                    account('facebook', 1, id=blocked)]
+        self.sync(accounts)
+        self.enqueue(required_destinations=['facebook'])
+        job = self.jobs('facebook')[0]
+        self.assertEqual(job['account_id'], allowed)
+        rows = {row['id']: row for row in self.store.accounts()}
+        self.assertTrue(rows[allowed]['eligible'])
+        self.assertFalse(rows[blocked]['eligible'])
+
+    def test_allowlist_applies_to_cached_pool_before_next_snapshot(self):
+        self.enqueue(required_destinations=['facebook'])
+        job = self.jobs('facebook')[0]
+        self.store = Store(self.store.path, facebook_publish_account_ids=['facebook-new'])
+        self.assertEqual(self.store.eligible_accounts('facebook'), [])
+        self.assertIsNone(self.store.ensure_slot(job['id'], self.at.date()))
+        self.assertIsNone(self.store.job(job['id'])['account_id'])
+
+    def test_allowlist_rejects_existing_intent_without_rewriting_it(self):
+        self.enqueue(required_destinations=['facebook'])
+        job = self.jobs('facebook')[0]
+        self.store.asset_checkpoint(job['asset_id'], 'drive_ready')
+        job = self.store.claim()
+        body = self.body(job)
+        generation = self.store.snapshot_generation()
+        self.store.begin_submission(job['id'], body, generation)
+        self.store = Store(self.store.path, facebook_publish_account_ids=['facebook-new'])
+        with self.assertRaises(ConfigurationError):
+            self.store.validate_submission(job['id'], body, generation)
+        self.assertEqual(self.store.job(job['id'])['payload']['submission'], body)
+
+    def test_allowlist_rejects_new_intent_with_cached_eligibility(self):
+        self.enqueue(required_destinations=['facebook'])
+        job = self.jobs('facebook')[0]
+        self.store.asset_checkpoint(job['asset_id'], 'drive_ready')
+        job = self.store.claim()
+        self.store = Store(self.store.path, facebook_publish_account_ids=['facebook-new'])
+        with self.assertRaises(ConfigurationError):
+            self.store.begin_submission(job['id'], self.body(job), self.store.snapshot_generation())

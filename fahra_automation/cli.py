@@ -44,7 +44,8 @@ def initialize(config):
     (config.root / "scripts/docker-for-mcp.py").chmod(0o755)
     return Store(config.database_path, daily_limit=config.section('workflow')['daily_limit'],
                  window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'],
-                 schedule_lead_seconds=config.section('workflow')['schedule_lead_seconds'])
+                 schedule_lead_seconds=config.section('workflow')['schedule_lead_seconds'],
+                 facebook_publish_account_ids=config.facebook_publish_account_ids)
 
 
 async def start_webhook(config, store, pipeline, replies):

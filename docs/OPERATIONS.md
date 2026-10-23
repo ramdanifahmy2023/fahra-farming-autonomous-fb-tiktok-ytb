@@ -2,6 +2,8 @@
 
 Semua perintah dari root proyek memakai `.venv/bin/python -m fahra_automation`. `config.example.toml` berisi default aman; penyesuaian mesin pada config.local.toml yang diabaikan Git. Jangan mencetak credential. Baca status/worklog terbaru sebelum mengubah layanan.
 
+Publikasi Facebook memakai allowlist `repliz.facebook_publish_account_ids`. Akun Facebook di luar daftar tetap dapat dipertahankan untuk histori dan komentar, tetapi tidak masuk kapasitas, rotasi, preflight, atau POST jadwal baru. Perubahan daftar harus melalui source/config tervalidasi, verifier penuh, dan deployment; jangan mengubah eligibility langsung di SQLite untuk melewati guard.
+
 ## Urutan normal
 
 Mulai versi perbaikan audit 18 Oktober, gunakan Python 3.14. Perubahan config file baru berlaku setelah restart semua klien layanan terkait. Schema v1 dimigrasikan ke v2 pada pembukaan tulis; status/health/inspect memakai SQLite read-only dan tidak mengubah schema.

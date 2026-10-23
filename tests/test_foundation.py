@@ -12,7 +12,7 @@ import httpx
 
 from fahra_automation.attribution import caption_from_metadata
 from fahra_automation.captioning import REWRITE_POLICY_VERSION
-from fahra_automation.config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID
+from fahra_automation.config import Config, ConfigurationError, EXCLUDED_ACCOUNT_ID, FACEBOOK_PUBLISH_ACCOUNT_IDS
 from fahra_automation.db import Store, AssetStore, ZONE
 from fahra_automation.pipeline import Pipeline
 from fahra_automation.repliz import Repliz, AccountUnavailable, account_id, publication_details
@@ -394,9 +394,10 @@ class ReplizTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.accounts(), before)
 
     async def test_create_blocks_wrong_platform_before_any_post(self):
-        self.client.request.return_value = {'id': 'bad', 'type': 'tiktok', 'isConnected': True, 'publishEligible': True}
+        aid = FACEBOOK_PUBLISH_ACCOUNT_IDS[0]
+        self.client.request.return_value = {'id': aid, 'type': 'tiktok', 'isConnected': True, 'publishEligible': True}
         with self.assertRaises(AccountUnavailable):
-            await self.client.check_account('bad', 'facebook')
+            await self.client.check_account(aid, 'facebook')
         self.assertEqual([c.args[0] for c in self.client.request.call_args_list], ['GET'])
 
     async def test_disabled_or_worktree_create_never_calls_api(self):

@@ -9,6 +9,15 @@ from pathlib import Path
 EXCLUDED_ACCOUNT_ID = '6a9ec26462caae1e0415af16'
 EXCLUDED_USERNAME = 'iq7fanspage'
 PLATFORMS = ('tiktok', 'facebook', 'youtube')
+FACEBOOK_PUBLISH_ACCOUNT_IDS = (
+    '6a9d5ffa62caae1e0413ff1f', '6a9d5ff862caae1e0413ff19',
+    '6a9d5ff662caae1e0413ff14', '6a9d5ff462caae1e0413ff10',
+    '6a9d5ff262caae1e0413ff07', '6a9d5fef62caae1e0413ff00',
+    '6a9d5fed62caae1e0413fef7', '6a9d5fea62caae1e0413fef1',
+    '6a9d5fe762caae1e0413fee2', '6a9d5fe562caae1e0413fedb',
+    '6a9d5fe362caae1e0413fed6', '6a9d5fbd62caae1e0413fe88',
+    '6a8e856d62caae1e040677e7',
+)
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -96,6 +105,12 @@ class Config:
                 raise ConfigurationError(f'Konfigurasi {section}.{key} harus {minimum}–{maximum}.')
         if data['reply']['poll_max_seconds'] < data['reply']['poll_seconds']:
             raise ConfigurationError('Batas jeda komentar tidak boleh lebih kecil dari jeda awal.')
+        facebook_ids = data['repliz'].get('facebook_publish_account_ids')
+        if (not isinstance(facebook_ids, list) or not facebook_ids
+                or any(not isinstance(account_id, str) or not account_id for account_id in facebook_ids)
+                or len(facebook_ids) != len(set(facebook_ids))
+                or not set(facebook_ids).issubset(FACEBOOK_PUBLISH_ACCOUNT_IDS)):
+            raise ConfigurationError('Allowlist Facebook Page tidak valid.')
         hook = data.setdefault('webhook', {})
         if type(hook.get('enabled', False)) is not bool:
             raise ConfigurationError('Konfigurasi webhook.enabled harus boolean.')
@@ -110,6 +125,10 @@ class Config:
 
     def section(self, name):
         return self.data[name]
+
+    @property
+    def facebook_publish_account_ids(self):
+        return frozenset(self.data['repliz']['facebook_publish_account_ids'])
 
     def path(self, value):
         path = Path(value).expanduser()

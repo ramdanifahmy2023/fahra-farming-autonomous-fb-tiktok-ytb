@@ -64,6 +64,16 @@ class ReplizContractTest(unittest.IsolatedAsyncioTestCase):
         remote.request = AsyncMock(return_value=page([]))
         self.assertEqual(await remote.pages('/public/account'), [])
 
+    async def test_facebook_publish_allowlist_rejects_unlisted_target(self):
+        remote = self.remote()
+        remote.request = AsyncMock()
+        with self.assertRaises(ConfigurationError):
+            await remote.create({'accountId': 'facebook-blocked', 'type': 'reel',
+                                 'scheduleAt': iso(now() + timedelta(minutes=5))}, 'facebook')
+        with self.assertRaises(ConfigurationError):
+            await remote.check_account('facebook-blocked', 'facebook')
+        remote.request.assert_not_awaited()
+
     async def test_changing_total_and_false_last_page_are_rejected(self):
         remote = self.remote()
         for responses in ([page([{'id': 'a'}], 2, 1, True), page([{'id': 'b'}], 3, 2)],

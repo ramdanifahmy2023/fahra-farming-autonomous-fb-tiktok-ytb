@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .config import ConfigurationError, EXCLUDED_ACCOUNT_ID, PLATFORMS, allowed_account
+from .config import ConfigurationError, EXCLUDED_ACCOUNT_ID, FACEBOOK_PUBLISH_ACCOUNT_IDS, PLATFORMS, allowed_account
 from .db import ZONE
 from .util import iso, now, safe_error
 from .telemetry import record_timing, flush as flush_timings
@@ -161,6 +161,10 @@ class Repliz:
         self.observer = None
         self.client = client or httpx.AsyncClient(
             base_url=config.section('repliz')['base_url'], auth=config.repliz_credentials(), timeout=45)
+
+    def publish_target_allowed(self, platform, account_id):
+        allowlist = self.config.section('repliz').get('facebook_publish_account_ids', FACEBOOK_PUBLISH_ACCOUNT_IDS)
+        return platform != 'facebook' or isinstance(allowlist, (list, tuple, set, frozenset)) and account_id in allowlist
 
     async def request(self, method, path, *, before_send=None, **kwargs):
         method = method.upper()
@@ -353,7 +357,8 @@ class Repliz:
                                     expected_generation=generation)
 
     async def check_account(self, aid, platform):
-        if platform not in PLATFORMS or not aid or aid == EXCLUDED_ACCOUNT_ID:
+        if (platform not in PLATFORMS or not aid or aid == EXCLUDED_ACCOUNT_ID
+                or not self.publish_target_allowed(platform, aid)):
             raise AccountUnavailable('Tujuan bukan akun TikTok, Facebook Page, atau YouTube yang diizinkan.')
         try:
             data = await self.request('GET', f'/public/account/{aid}')
@@ -424,7 +429,8 @@ class Repliz:
                 'accountId': job['account_id'], 'scheduleAt': iso(when), 'additionalInfo': info}
 
     async def create(self, payload, platform, *, before_send=None):
-        if platform not in PLATFORMS or not payload.get('accountId') or payload['accountId'] == EXCLUDED_ACCOUNT_ID:
+        if (platform not in PLATFORMS or not payload.get('accountId') or payload['accountId'] == EXCLUDED_ACCOUNT_ID
+                or not self.publish_target_allowed(platform, payload['accountId'])):
             raise ConfigurationError('Tujuan publikasi tidak diizinkan.')
         if payload.get('type') != ('reel' if platform == 'facebook' else 'video'):
             raise ValueError('Jenis media tidak sesuai adapter platform.')

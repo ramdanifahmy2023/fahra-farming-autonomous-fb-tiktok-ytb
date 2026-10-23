@@ -38,6 +38,15 @@ forbidden_token_files = ["/Volumes/DATA KERJA /Project Dev/Peternakan-akun/Crede
 credentials_file = "Credential/repliz.md"
 base_url = "https://api.repliz.com"
 sync_concurrency = 2
+facebook_publish_account_ids = [
+  "6a9d5ffa62caae1e0413ff1f", "6a9d5ff862caae1e0413ff19",
+  "6a9d5ff662caae1e0413ff14", "6a9d5ff462caae1e0413ff10",
+  "6a9d5ff262caae1e0413ff07", "6a9d5fef62caae1e0413ff00",
+  "6a9d5fed62caae1e0413fef7", "6a9d5fea62caae1e0413fef1",
+  "6a9d5fe762caae1e0413fee2", "6a9d5fe562caae1e0413fedb",
+  "6a9d5fe362caae1e0413fed6", "6a9d5fbd62caae1e0413fe88",
+  "6a8e856d62caae1e040677e7",
+]
 
 [downloader]
 project_dir = "/Users/fahra/Projects/instagram-downloader-mcp"

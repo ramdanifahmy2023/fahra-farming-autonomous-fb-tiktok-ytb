@@ -33,7 +33,8 @@ class Connection(sqlite3.Connection):
 
 class Store:
     def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600, readonly=False,
-                 provider_limit_cooldown_seconds=21600, schedule_lead_seconds=60):
+                 provider_limit_cooldown_seconds=21600, schedule_lead_seconds=60,
+                 facebook_publish_account_ids=None):
         if type(daily_limit) is not int or not 1 <= daily_limit <= 20:
             raise ValueError('Batas video harus antara satu dan 20 per akun/hari.')
         if not (type(window_start) is int and type(window_end) is int and 0 <= window_start < window_end <= 24):
@@ -41,6 +42,12 @@ class Store:
         self.path = Path(path)
         self.daily_limit, self.window_start, self.window_end = daily_limit, window_start, window_end
         self.snapshot_ttl = snapshot_ttl
+        if facebook_publish_account_ids is not None:
+            if (not facebook_publish_account_ids
+                    or any(not isinstance(account_id, str) or not account_id for account_id in facebook_publish_account_ids)):
+                raise ValueError('Allowlist Facebook Page tidak valid.')
+            facebook_publish_account_ids = frozenset(facebook_publish_account_ids)
+        self.facebook_publish_account_ids = facebook_publish_account_ids
         if type(schedule_lead_seconds) is not int or not 30 <= schedule_lead_seconds <= 3600:
             raise ValueError('Jarak aman jadwal harus 30 sampai 3600 detik.')
         self.schedule_lead_seconds = schedule_lead_seconds
@@ -133,6 +140,10 @@ class Store:
             upgrade(c, version)
             self.put_setting(c, 'schema_version', SCHEMA_VERSION)
             self.put_setting(c, 'daily_limit', daily_limit)
+
+    def publish_target_allowed(self, platform, account_id):
+        return (platform != 'facebook' or self.facebook_publish_account_ids is None
+                or account_id in self.facebook_publish_account_ids)
 
     def connect(self):
         c = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro' if self.readonly else self.path,
@@ -283,7 +294,8 @@ class Store:
             if not self._snapshot_fresh(c):
                 return []
             return [dict(r) for r in c.execute('SELECT * FROM accounts WHERE connected=1 AND eligible=1 ORDER BY ordinal')
-                    if platform is None or r['platform'] == platform]
+                    if (platform is None or r['platform'] == platform)
+                    and self.publish_target_allowed(r['platform'], r['id'])]
 
     def _sync_accounts(self, c, accounts, schedules=()):
         selected = [a for a in accounts if allowed_account(a)]
@@ -324,8 +336,11 @@ class Store:
                 evidence = 'provider_success'
             if not evidence and prior and prior['identity'] == identity and prior['expires_at'] > iso() and prior['state'] == 'ready':
                 evidence = 'cached:' + prior['evidence'].removeprefix('cached:')
-            eligible = bool(username and a['isConnected'] and (explicit is True or (explicit is None and evidence)))
+            target_allowed = self.publish_target_allowed(a['type'], aid)
+            eligible = bool(target_allowed and username and a['isConnected']
+                            and (explicit is True or (explicit is None and evidence)))
             reason = '' if eligible else ('Identitas akun belum lengkap.' if not username else
+                     'Facebook Page di luar allowlist publikasi.' if not target_allowed else
                      'Akun terputus.' if not a['isConnected'] else
                      'Provider menolak posting.' if explicit is False else 'Bukti kemampuan posting belum tersedia.')
             c.execute('''INSERT INTO accounts(id,username,platform,name,ordinal,connected,updated_at,eligible,slot_offset)
@@ -346,7 +361,7 @@ class Store:
             counts_quota=0,next_attempt=?,updated_at=? WHERE status IN ('queued','downloaded','analyzed','rendered','drive_ready')
             AND schedule_id IS NULL AND json_extract(payload,'$.submission') IS NULL
             AND account_id IN (SELECT id FROM accounts WHERE connected=0 OR eligible=0)''', (iso(), iso())).rowcount
-        if any(changes.values()):
+        if released or any(changes.values()):
             c.execute('''UPDATE jobs SET next_attempt=?,payload=json_set(payload,'$.allocation_recheck',1)
                 WHERE status='drive_ready' AND schedule_id IS NULL
                 AND json_extract(payload,'$.submission') IS NULL''', (iso(),))
@@ -479,8 +494,7 @@ class Store:
             self.put_setting(c, 'sync_in_progress', False)
             self._wake_dependency(c, 'snapshot')
 
-    @staticmethod
-    def loads(c, day, platform=None):
+    def loads(self, c, day, platform=None):
         where = "a.connected=1 AND a.eligible=1" + (" AND a.platform=?" if platform else "")
         params = (platform,) if platform else ()
         accounts = c.execute('SELECT a.* FROM accounts a WHERE ' + where + ' ORDER BY a.ordinal', params).fetchall()
@@ -491,7 +505,8 @@ class Store:
                 AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.schedule_id=e.id OR j.id=e.job_id)
                     AND j.account_id=e.account_id AND j.slot_date=e.slot_date AND j.counts_quota=1)
                 GROUP BY e.account_id''', (*params, day)))
-        return {a['id']: (dict(a), local.get(a['id'], 0) + external.get(a['id'], 0)) for a in accounts}
+        return {a['id']: (dict(a), local.get(a['id'], 0) + external.get(a['id'], 0)) for a in accounts
+                if self.publish_target_allowed(a['platform'], a['id'])}
 
     @staticmethod
     def _occupied_slots(c, day, platform):
@@ -836,6 +851,7 @@ class Store:
                 return None
             a = c.execute("SELECT * FROM accounts WHERE id=?", (job["account_id"],)).fetchone()
             valid = (a and a['connected'] and a['eligible'] and a['platform'] == job['platform']
+                     and self.publish_target_allowed(a['platform'], a['id'])
                      and job['slot_date'] and job['slot_date'] >= day.isoformat()
                      and job['planned_at'] and parse_time(job['planned_at']) >= now() + timedelta(seconds=self.schedule_lead_seconds))
             if valid and job["slot_date"] > day.isoformat():
@@ -913,7 +929,9 @@ class Store:
             if payload.get('submission'):
                 raise ConfigurationError('Hasil pengiriman sebelumnya harus direkonsiliasi.')
             account = c.execute('SELECT * FROM accounts WHERE id=?', (job['account_id'],)).fetchone()
-            if not account or not account['connected'] or not account['eligible'] or account['platform'] != job['platform']:
+            if (not account or not account['connected'] or not account['eligible']
+                    or account['platform'] != job['platform']
+                    or not self.publish_target_allowed(job['platform'], job['account_id'])):
                 raise ConfigurationError('Akun tidak lagi eligible.')
             if not c.execute("""SELECT 1 FROM account_capabilities WHERE account_id=?
                 AND operation='publish' AND state='ready' AND expires_at>?""", (job['account_id'],iso())).fetchone():
@@ -961,7 +979,8 @@ class Store:
                 raise ConfigurationError('Pilihan pilot berubah sebelum pengiriman.')
             account = c.execute('SELECT * FROM accounts WHERE id=?', (job['account_id'],)).fetchone()
             if (not account or not account['connected'] or not account['eligible']
-                    or account['platform'] != job['platform'] or body.get('accountId') != account['id']):
+                    or account['platform'] != job['platform'] or body.get('accountId') != account['id']
+                    or not self.publish_target_allowed(job['platform'], job['account_id'])):
                 raise ConfigurationError('Akun tidak lagi siap untuk dikirim.')
             if not c.execute("""SELECT 1 FROM account_capabilities WHERE account_id=?
                 AND operation='publish' AND state='ready' AND expires_at>?""", (job['account_id'],iso())).fetchone():
