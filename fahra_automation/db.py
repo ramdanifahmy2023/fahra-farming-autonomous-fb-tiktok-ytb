@@ -1086,12 +1086,22 @@ class Store:
                        schedule['status'], job_id, sid))
             return self.decode(c.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone())
 
+    def publication_monitor_issues(self):
+        with self.connect() as c:
+            row = c.execute("""SELECT count(*) AS unresolved,
+                coalesce(sum(json_extract(payload,'$.monitor_terminal')='provider_schedule_missing'),0) AS missing
+                FROM jobs WHERE status IN ('submitting','submit_unknown','scheduled','failed')
+                AND (coalesce(json_extract(payload,'$.poll_failures'),0)>0
+                    OR json_extract(payload,'$.monitor_terminal')='provider_schedule_missing')""").fetchone()
+            return dict(row)
+
     def pending_publications(self, limit=10):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('Batas monitor tidak valid.')
         with self.connect() as c:
             due = """
                 (status IN ('submitting','submit_unknown','scheduled') OR (status='failed' AND schedule_id IS NOT NULL))
+                AND coalesce(json_extract(payload,'$.monitor_terminal'),0)=0
                 AND coalesce(json_extract(payload,'$.next_poll'),'')<=?"""
             near = iso(now() + timedelta(minutes=5))
             priority = """CASE WHEN status IN ('submitting','submit_unknown') THEN 0

@@ -42,6 +42,8 @@ def clock_time(value):
 
 def label(job):
     state = job["status"]
+    if state != 'published' and job.get('payload', {}).get('monitor_terminal') == 'provider_schedule_missing':
+        return 'Perlu rekonsiliasi jadwal'
     if state == "queued" and job.get("leased"):
         return "Mengunduh Instagram"
     if state in STAGE_INDEX and STAGE_INDEX[state] < 4 and job.get("last_error") and not job.get("leased"):
@@ -53,6 +55,10 @@ def label(job):
 
 def human_error(error):
     value = error.lower()
+    if 'schedule not found' in value:
+        return ('Jadwal tidak ditemukan di Repliz. Hasil publikasi belum terverifikasi; '
+                'polling jadwal tersebut ditahan. Admin perlu mencocokkan ID jadwal. '
+                'Bot tidak membuat kiriman pengganti otomatis.')
     if "snapshot" in value:
         return "Data akun sedang diperbarui. Bot melanjutkan otomatis setelah data lengkap."
     if "sinkronisasi bank konten" in value:

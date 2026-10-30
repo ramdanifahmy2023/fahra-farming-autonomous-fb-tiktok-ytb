@@ -333,7 +333,7 @@ class Pipeline:
             self.notify_work()
 
     async def monitor(self, job_id=None):
-        failures = []
+        failures, checked = [], 0
         for job in ([self.store.job(job_id)] if job_id else self.store.pending_publications()):
             if job and job['status'] == 'published':
                 continue
@@ -343,6 +343,7 @@ class Pipeline:
                 raise ValueError('Belum ada intent kirim untuk dicocokkan.')
             if not job_id and job["payload"].get("next_poll", "") > iso():
                 continue
+            checked += 1
             try:
                 self.store.checkpoint(job["id"], preserve_published=True, payload={"next_poll": iso(now() + timedelta(seconds=90))})
                 with api_scope('background' if job['status'] == 'failed' else 'monitor'):
@@ -370,6 +371,7 @@ class Pipeline:
                     self.journal.mark(job['id'], 'accepted', schedule_id=remote_id)
                 self.store.apply_remote_schedule(job['id'], result)
                 self.store.checkpoint(job['id'], preserve_published=True, payload={'poll_failures': 0,
+                    'monitor_terminal': False, 'failure_kind': None,
                     'next_poll': self.next_publication_poll(job)})
                 if not job['schedule_id']:
                     self.store.checkpoint(job['id'], 'scheduled', preserve_published=True, schedule_id=remote_id)
@@ -387,6 +389,24 @@ class Pipeline:
                                                    'provider_poll_failures': job['payload'].get('provider_poll_failures', 0) + 1,
                                                    'failure_kind': 'provider'},
                                           last_error=safe_error(result.get("errorMessage", "Repliz melaporkan error")))
+            except ReplizError as exc:
+                if exc.status == 404 and job.get('schedule_id'):
+                    saved = self.store.checkpoint(job['id'], preserve_published=True, leased=0,
+                                          payload={'monitor_terminal': 'provider_schedule_missing',
+                                                   'poll_failures': job['payload'].get('poll_failures', 0) + 1,
+                                                   'next_poll': ''},
+                                          last_error=str(exc))
+                    if saved is False:
+                        continue
+                    self.store.record('publication_schedule_missing', job['id'],
+                                      schedule_id=job.get('schedule_id'))
+                    failures.append('Repliz HTTP 404: schedule not found')
+                    continue
+                failures.append(safe_error(exc))
+                self.store.checkpoint(job['id'], preserve_published=True, payload={
+                    'next_poll': self.next_publication_poll(job, exception=True),
+                    'poll_failures': job['payload'].get('poll_failures', 0) + 1})
+                self.store.record("publication_poll_failed", job["id"], error=safe_error(exc))
             except Exception as exc:
                 failures.append(safe_error(exc))
                 self.store.checkpoint(job['id'], preserve_published=True, payload={
@@ -395,7 +415,13 @@ class Pipeline:
                 self.store.record("publication_poll_failed", job["id"], error=safe_error(exc))
         await self.share_link_reports()
         self.store.batch_reports()
-        self.store.health('publication_monitor', 'error' if failures else 'ok', reason='; '.join(failures))
+        issues = self.store.publication_monitor_issues()
+        reason = ('Repliz HTTP 404: schedule not found' if issues['missing'] else
+                  '; '.join(failures) if failures else
+                  'Pemeriksaan jadwal sebelumnya belum berhasil.' if issues['unresolved'] else
+                  '' if checked else 'Tidak ada jadwal yang perlu diperiksa.')
+        self.store.health('publication_monitor', 'error' if failures or issues['unresolved'] else 'ok' if checked else 'waiting',
+                          reason=reason, details=issues)
         return not failures
 
     async def share_link_reports(self):

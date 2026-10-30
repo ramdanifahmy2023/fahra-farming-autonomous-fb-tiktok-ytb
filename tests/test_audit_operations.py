@@ -79,7 +79,20 @@ class Operations(unittest.TestCase):
             Store(missing, readonly=True)
         self.assertFalse(missing.parent.exists())
 
-    def test_health_alert_is_deduplicated_and_waiting_is_not_failure(self):
+    def test_health_alert_stays_deduplicated_while_monitor_waits_for_recovery(self):
+        for _ in range(3):
+            self.store.health('publication_monitor', 'error', reason='Repliz HTTP 404: schedule not found')
+        self.store.health('publication_monitor', 'waiting', reason='Tidak ada jadwal yang perlu diperiksa.')
+        self.store.health('publication_monitor', 'error', reason='Repliz HTTP 404: schedule not found')
+        with self.store.connect() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM outbox WHERE dedupe_key LIKE 'health:publication_monitor:%'").fetchone()[0], 1)
+        self.store.health('publication_monitor', 'ok')
+        for _ in range(3):
+            self.store.health('publication_monitor', 'error', reason='Repliz HTTP 404: schedule not found')
+        with self.store.connect() as c:
+            self.assertEqual(c.execute("SELECT count(*) FROM outbox WHERE dedupe_key LIKE 'health:publication_monitor:%'").fetchone()[0], 2)
+
+    def test_health_alert_is_deduplicated_and_waiting_keeps_incident_open(self):
         for _ in range(8):
             self.store.health('fixture', 'error', reason='fixture unavailable')
         self.assertEqual(len(self.store.notifications()), 1)
@@ -87,7 +100,7 @@ class Operations(unittest.TestCase):
         self.assertEqual(item['failures'], 8)
         self.assertIsNone(item['last_success'])
         self.store.health('fixture', 'waiting')
-        self.assertEqual(report(self.store)['loops'][0]['failures'], 0)
+        self.assertEqual(report(self.store)['loops'][0]['failures'], 8)
 
     def test_bundle_restore_keeps_accepted_journal_and_is_shadow(self):
         journal = AttemptJournal(self.config)

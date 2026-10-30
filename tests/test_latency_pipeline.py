@@ -307,23 +307,20 @@ class LatencyPipelineTest(unittest.IsolatedAsyncioTestCase):
         with self.store.connect() as connection:
             self.assertEqual(connection.execute('SELECT count(*) FROM assets WHERE leased_job_id IS NOT NULL').fetchone()[0], 0)
 
-    async def test_schedule_404_backs_off_without_resending_or_releasing_quota(self):
+    async def test_schedule_404_holds_without_resending_or_releasing_quota(self):
         job = self.lease()
         await self.pipeline.handle(job)
         self.remote.status.side_effect = ReplizError(404, 'Schedule not visible')
         self.store.checkpoint(job['id'], payload={'next_poll': ''})
-        for expected in (90, 180, 360, 720, 1440, 1800, 1800):
-            await self.pipeline.monitor()
-            current = self.store.job(job['id'])
-            next_at = datetime.fromisoformat(current['payload']['next_poll'])
-            self.assertEqual((next_at - self.at).total_seconds(), expected)
-            self.assertEqual(current['status'], 'scheduled')
-            self.assertEqual(current['counts_quota'], 1)
-            calls = self.remote.status.await_count
-            self.at = next_at - timedelta(seconds=1)
-            await self.pipeline.monitor()
-            self.assertEqual(self.remote.status.await_count, calls)
-            self.at = next_at
+        await self.pipeline.monitor()
+        current = self.store.job(job['id'])
+        self.assertEqual(current['status'], 'scheduled')
+        self.assertEqual(current['counts_quota'], 1)
+        self.assertEqual(current['payload']['monitor_terminal'], 'provider_schedule_missing')
+        self.assertEqual(current['payload']['next_poll'], '')
+        self.assertEqual(self.store.pending_publications(), [])
+        await self.pipeline.monitor()
+        self.assertEqual(self.remote.status.await_count, 1)
         self.remote.create.assert_awaited_once()
         self.remote.reconcile.assert_not_awaited()
         self.assertEqual(self.journal.state(job['id'])['state'], 'accepted')
@@ -430,20 +427,19 @@ class LatencyPipelineTest(unittest.IsolatedAsyncioTestCase):
         with self.store.connect() as connection:
             self.assertEqual(connection.execute('SELECT count(*) FROM submission_attempts').fetchone()[0], 1)
 
-    async def test_failed_schedule_404_eventually_polls_every_six_hours(self):
+    async def test_failed_schedule_404_holds_until_operator_reconciles(self):
         job = self.lease()
         await self.pipeline.handle(job)
         self.store.checkpoint(job['id'], 'failed', payload={'next_poll': ''})
         self.remote.status.side_effect = ReplizError(404, 'Deleted remote schedule fixture')
-        delays = []
-        for _ in range(11):
-            await self.pipeline.monitor()
-            current = self.store.job(job['id'])
-            next_at = datetime.fromisoformat(current['payload']['next_poll'])
-            delays.append((next_at - self.at).total_seconds())
-            self.assertEqual(current['status'], 'failed')
-            self.assertEqual(current['counts_quota'], 1)
-            self.at = next_at
-        self.assertEqual(delays, [90, 180, 360, 720, 1440, 2880, 5760, 11520, 21600, 21600, 21600])
+        await self.pipeline.monitor()
+        current = self.store.job(job['id'])
+        self.assertEqual(current['status'], 'failed')
+        self.assertEqual(current['counts_quota'], 1)
+        self.assertEqual(current['payload']['monitor_terminal'], 'provider_schedule_missing')
+        self.assertEqual(current['payload']['next_poll'], '')
+        self.assertEqual(self.store.pending_publications(), [])
+        await self.pipeline.monitor()
+        self.assertEqual(self.remote.status.await_count, 1)
         self.remote.create.assert_awaited_once()
         self.assertEqual(self.journal.state(job['id'])['state'], 'accepted')

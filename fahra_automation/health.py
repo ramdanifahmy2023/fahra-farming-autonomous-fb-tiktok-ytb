@@ -15,12 +15,20 @@ def record(store, component, state, *, reason='', duration_ms=None, details=None
         if (old and state in {'ok','waiting'} and old['state'] == state and old['reason'] == reason
                 and (now() - datetime.fromisoformat(old['checked_at'])).total_seconds() < 30):
             return
-        failures = (old['failures'] if old else 0) + 1 if state == 'error' else 0
+        old_details = json.loads(old['details']) if old else {}
+        continuing = bool(old and old_details.get('incident_at') and old['state'] in {'waiting', 'error'})
+        failures = ((old['failures'] if continuing else 0) + 1 if state == 'error'
+                    else old['failures'] if state == 'waiting' and continuing else 0)
         success = iso() if state == 'ok' else old['last_success'] if old else None
+        details = dict(details or {})
+        if state == 'error':
+            details['incident_at'] = old_details.get('incident_at') if continuing else iso()
+        elif state == 'waiting' and continuing:
+            details['incident_at'] = old_details['incident_at']
         c.execute('INSERT OR REPLACE INTO health VALUES(?,?,?,?,?,?,?,?)',
                   (component, iso(), success, state, failures, reason, duration_ms,
                    json.dumps(details or {}, ensure_ascii=False)))
-        if failures == 3:
+        if state == 'error' and failures == 3:
             from .telegram_views import human_error
             names = {'account_sync': 'Pembaruan data akun', 'reply_poll': 'Pemeriksaan komentar',
                      'reply_profiles': 'Pengaturan balasan', 'reply_worker': 'Balasan komentar',
@@ -30,9 +38,9 @@ def record(store, component, state, *, reason='', duration_ms=None, details=None
             store.event(c, 'health_alert', component=component, reason=reason)
             c.execute("""INSERT OR IGNORE INTO outbox(dedupe_key,chat_id,text,created_at,options)
                 VALUES(?,265732518,?,?,'{}')""",
-                ('health:' + component + ':' + (success or 'initial'),
+                ('health:' + component + ':' + details['incident_at'],
                  f"{names.get(component, 'Layanan bot')} perlu diperiksa\n\n"
-                 f"Tiga pemeriksaan berturut-turut belum berhasil.\n{human_error(reason)}\n\n"
+                 f"Masih ada pemeriksaan yang belum terselesaikan.\n{human_error(reason)}\n\n"
                  'Buka /status untuk melihat antrean. Detail teknis tersimpan di log admin.', iso()))
 
 

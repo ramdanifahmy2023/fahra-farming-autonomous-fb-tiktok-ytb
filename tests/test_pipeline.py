@@ -257,6 +257,50 @@ class PipelineTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.job(job['id'])['status'], 'published')
         self.remote.create.assert_not_awaited()
 
+    async def test_missing_remote_schedule_is_held_and_removed_from_background_polling(self):
+        job = self.lease('youtube')
+        self.store.checkpoint(job['id'], 'scheduled', schedule_id='missing-schedule', leased=0,
+                              payload={'next_poll': ''})
+        self.remote.status.side_effect = ReplizError(404, 'schedule not found')
+        self.assertFalse(await self.pipeline.monitor())
+        held = self.store.job(job['id'])
+        self.assertEqual(held['status'], 'scheduled')
+        self.assertEqual(held['payload']['monitor_terminal'], 'provider_schedule_missing')
+        self.assertEqual(held['counts_quota'], 1)
+        self.assertEqual(self.store.pending_publications(), [])
+        self.remote.create.assert_not_awaited()
+
+    async def test_missing_schedule_recovers_only_after_valid_get_without_resend(self):
+        job = self.lease()
+        await self.pipeline.handle(job)
+        before = self.store.job(job['id'])
+        self.remote.status.side_effect = ReplizError(404, 'schedule not found')
+        await self.pipeline.monitor(job['id'])
+        response = {**before['payload']['submission'], 'id': before['schedule_id'], 'status': 'pending'}
+        self.store.apply_snapshot(self.accounts, [response], '2026-10-16', '2027-10-17')
+        self.assertEqual(self.store.pending_publications(), [])
+        self.remote.status.side_effect = None
+        self.remote.status.return_value = response
+        self.assertTrue(await self.pipeline.monitor(job['id']))
+        recovered = self.store.job(job['id'])
+        self.assertFalse(recovered['payload']['monitor_terminal'])
+        self.assertEqual(recovered['counts_quota'], before['counts_quota'])
+        self.assertEqual(recovered['schedule_id'], before['schedule_id'])
+        self.assertEqual(self.store.publication_monitor_issues()['unresolved'], 0)
+        self.remote.create.assert_awaited_once()
+
+    async def test_held_schedule_keeps_health_incident_open_across_empty_polls(self):
+        job = self.lease()
+        self.store.checkpoint(job['id'], 'scheduled', schedule_id='missing-schedule', leased=0)
+        self.remote.status.side_effect = ReplizError(404, 'schedule not found')
+        for _ in range(8):
+            await self.pipeline.monitor()
+        with self.store.connect() as connection:
+            self.assertEqual(connection.execute("SELECT count(*) FROM outbox WHERE dedupe_key LIKE 'health:publication_monitor:%'").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT state FROM health WHERE component='publication_monitor'").fetchone()[0], 'error')
+        self.remote.status.assert_awaited_once()
+        self.remote.create.assert_not_awaited()
+
     async def test_ambiguous_mcp_holds_all_unsent_destinations(self):
         job = self.lease()
         self.store.checkpoint(job['id'], 'queued')
