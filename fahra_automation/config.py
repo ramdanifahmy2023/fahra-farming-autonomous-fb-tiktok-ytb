@@ -9,6 +9,7 @@ from pathlib import Path
 EXCLUDED_ACCOUNT_ID = '6a9ec26462caae1e0415af16'
 EXCLUDED_USERNAME = 'iq7fanspage'
 PLATFORMS = ('tiktok', 'facebook', 'youtube')
+DEFAULT_NEW_DELIVERY_PLATFORMS = ('tiktok', 'facebook')
 FACEBOOK_PUBLISH_ACCOUNT_IDS = (
     '6a9d5ffa62caae1e0413ff1f', '6a9d5ff862caae1e0413ff19',
     '6a9d5ff662caae1e0413ff14', '6a9d5ff462caae1e0413ff10',
@@ -66,6 +67,11 @@ class Config:
             if match:
                 data['drive']['folder_id'] = match[1]
         wf = data['workflow']
+        destinations = wf.setdefault('new_delivery_platforms', list(DEFAULT_NEW_DELIVERY_PLATFORMS))
+        if (not isinstance(destinations, list) or not destinations
+                or any(not isinstance(platform, str) or platform not in PLATFORMS for platform in destinations)
+                or len(destinations) != len(set(destinations))):
+            raise ConfigurationError('Tujuan delivery baru tidak valid.')
         if type(wf['daily_limit']) is not int or not 1 <= wf['daily_limit'] <= 20:
             raise ConfigurationError('Batas video harus 1–20 per akun per hari.')
         if wf['timezone'] != 'Asia/Jakarta' or wf.get('project') != 'fahra-automation':
@@ -129,6 +135,10 @@ class Config:
     @property
     def facebook_publish_account_ids(self):
         return frozenset(self.data['repliz']['facebook_publish_account_ids'])
+
+    @property
+    def new_delivery_platforms(self):
+        return tuple(self.data['workflow']['new_delivery_platforms'])
 
     def path(self, value):
         path = Path(value).expanduser()

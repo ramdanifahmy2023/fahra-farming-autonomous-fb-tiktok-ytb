@@ -40,12 +40,12 @@ class TelegramUITest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.store = Store(Path(self.temp.name) / "ui.db")
-        self.store.apply_snapshot([{"id": p, "username": "akun_satu", "name": "Akun", "type": p, "isConnected": True, "publishEligible": True} for p in ("tiktok", "facebook", "youtube")], [], (now()-timedelta(days=1)).date().isoformat(), (now()+timedelta(days=366)).date().isoformat())
         self.config = Config(Path(self.temp.name), copy.deepcopy(Config.load().data))
         self.config.runtime.mkdir(exist_ok=True)
         self.config.data["workflow"]["min_free_disk_gb"] = 0
         self.config.data["telegram"].update(allowed_user_ids=[1], public_ingest=True)
+        self.store = Store(Path(self.temp.name) / "ui.db", new_delivery_platforms=self.config.new_delivery_platforms)
+        self.store.apply_snapshot([{"id": p, "username": "akun_satu", "name": "Akun", "type": p, "isConnected": True, "publishEligible": True} for p in ("tiktok", "facebook", "youtube")], [], (now()-timedelta(days=1)).date().isoformat(), (now()+timedelta(days=366)).date().isoformat())
         self.pipeline = Mock()
         self.pipeline.fresh_sync.return_value = True
         self.bot = Telegram(self.config, self.store, self.pipeline, client=Mock())
@@ -92,8 +92,31 @@ class TelegramUITest(unittest.IsolatedAsyncioTestCase):
         text = self.bot.send_ui.call_args.kwargs["text"]
         self.assertIn("1 duplikat", text)
         self.assertIn("1 link tidak valid", text)
-        self.assertEqual(self.store.summary()["reserved_or_published"], 3)
-        self.assertIn("1 Reel · 3 kiriman", text)
+        self.assertEqual(self.store.summary()["reserved_or_published"], 2)
+        with self.store.connect() as connection:
+            batch_id = connection.execute('SELECT id FROM batches').fetchone()[0]
+        self.assertEqual({job['platform'] for job in self.store.progress_snapshot(batch_id)[1]}, {'tiktok', 'facebook'})
+        self.assertIn("1 Reel · 2 kiriman", text)
+
+    async def test_help_and_new_intake_use_only_configured_platforms(self):
+        self.assertEqual(self.config.new_delivery_platforms, ('tiktok', 'facebook'))
+        await self.bot.process({"update_id": 2, "message": {"message_id": 2, "from": {"id": 77},
+            "chat": {"id": 77, "type": "private"}, "text": "/bantuan"}})
+        help_text = self.store.notifications()[0]['text']
+        self.assertIn('Satu Reel menjadi 2 kiriman:', help_text)
+        self.assertIn('TikTok · Facebook Page', help_text)
+        self.assertNotIn('YouTube', help_text)
+
+        self.config.data['workflow']['new_delivery_platforms'] = ['facebook']
+        await self.bot.process({"update_id": 3, "message": {"message_id": 3, "from": {"id": 77},
+            "chat": {"id": 77, "type": "private"}, "text": "https://instagram.com/reel/facebook_only/"}})
+        batch_id = self.store.progress_due()[0]
+        self.assertEqual([job['platform'] for job in self.store.progress_snapshot(batch_id)[1]], ['facebook'])
+
+    def test_status_shows_current_new_delivery_targets(self):
+        text, _ = views.status(self.store.summary())
+        self.assertIn('Tujuan link baru: TikTok · Facebook', text)
+        self.assertNotIn('Tujuan link baru: TikTok · Facebook · YouTube', text)
 
     async def test_callback_owner_admin_scope_and_pagination(self):
         bid = self.enqueue(20)

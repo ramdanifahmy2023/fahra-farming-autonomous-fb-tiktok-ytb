@@ -289,6 +289,9 @@ def status(summary):
     lines.extend(["\n<b>Slot kirim hari ini</b>",
                   f"{summary['reserved_or_published']} terpakai dari {summary['daily_capacity']} · {summary['accounts']} akun",
                   "Termasuk jadwal yang belum terbit."])
+    targets = summary.get('new_delivery_platforms')
+    if targets:
+        lines.append("Tujuan link baru: " + " · ".join(platform_name({'platform': platform}) for platform in targets))
     for platform, values in summary.get("platforms", {}).items():
         lines.append(f"{platform_name({'platform': platform})}: {values['accounts']} akun · "
                      f"{values['reserved_or_published']}/{values['daily_capacity']} slot")

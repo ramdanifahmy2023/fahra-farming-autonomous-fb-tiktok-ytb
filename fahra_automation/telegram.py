@@ -13,14 +13,7 @@ import httpx
 from .util import extract_urls, iso, now, safe_error
 from . import telegram_views as views
 
-HELP = (
-    "<b>Kirim Reel di sini</b>\n\n"
-    "Tempel link Reel Instagram. Kalau banyak, tulis satu link per baris.\n\n"
-    "Satu Reel menjadi tiga kiriman:\nTikTok · Facebook Page · YouTube Shorts\n\n"
-    "Bot menyiapkan video dan caption, menyimpan ke Drive, lalu menjadwalkan kiriman. "
-    "Progres diperbarui dalam satu pesan. Link hasil muncul setelah video benar-benar terbit.\n\n"
-    "Maksimal 20 video per akun per hari. Jika slot penuh, kiriman menunggu hari berikutnya."
-)
+PLATFORM_NAMES = {"tiktok": "TikTok", "facebook": "Facebook Page", "youtube": "YouTube Shorts"}
 ADMIN_HELP = ("\n\n<b>Pantau pekerjaan</b>\n/status · kuota dan pekerjaan\n/antrean · daftar kiriman\n"
               "/akun · akun tujuan\n/video ID · detail video\n\n<b>Kelola antrean</b>\n/jeda · jeda pekerjaan baru\n"
               "/lanjut · lanjutkan\n/ulang ID · coba lagi video gagal\n/batal ID · batalkan sebelum dikirim\n\n"
@@ -43,6 +36,18 @@ class Telegram:
         self.chat_sent_at = {}
         with store.connect() as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS telegram_delivery_retry(outbox_id INTEGER PRIMARY KEY,next_attempt TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 1)")
+
+    def help_text(self):
+        destinations = self.config.new_delivery_platforms
+        names = " · ".join(PLATFORM_NAMES[platform] for platform in destinations)
+        return (
+            "<b>Kirim Reel di sini</b>\n\n"
+            "Tempel link Reel Instagram. Kalau banyak, tulis satu link per baris.\n\n"
+            f"Satu Reel menjadi {len(destinations)} kiriman:\n{names}\n\n"
+            "Bot menyiapkan video dan caption, menyimpan ke Drive, lalu menjadwalkan kiriman. "
+            "Progres diperbarui dalam satu pesan. Link hasil muncul setelah video benar-benar terbit.\n\n"
+            "Maksimal 20 video per akun per hari. Jika slot penuh, kiriman menunggu hari berikutnya."
+        )
 
     async def call(self, method, **data):
         if method == 'sendPhoto' and isinstance(data.get('photo'), bytes):
@@ -90,7 +95,7 @@ class Telegram:
                               'Jawaban perintah dikirim lewat chat pribadi. Buka bot dan tekan Mulai jika belum terhubung.')
         if command == "/pair" and message["chat"]["type"] == "private":
             paired = self.store.pair(argument.strip(), user_id, chat_id)
-            self.store.notify(prefix, chat_id, "Terhubung.\n\n" + HELP + ADMIN_HELP if paired else "Kode pairing salah atau kedaluwarsa. Buat kode baru dari CLI proyek.", views.html_options())
+            self.store.notify(prefix, chat_id, "Terhubung.\n\n" + self.help_text() + ADMIN_HELP if paired else "Kode pairing salah atau kedaluwarsa. Buat kode baru dari CLI proyek.", views.html_options())
             return
         admin = self.authorized(user_id)
         public = self.config.section("telegram").get("public_ingest", False)
@@ -99,7 +104,7 @@ class Telegram:
                 self.store.notify(prefix, chat_id, "Bot ini memerlukan pairing. Jalankan perintah pair-code dari proyek lalu kirim /pair KODE melalui chat pribadi.")
             return
         if command in {"/start", "/help", "/bantuan"}:
-            self.store.notify(prefix, report_chat, HELP + (ADMIN_HELP if admin and command != '/start' else ""),
+            self.store.notify(prefix, report_chat, self.help_text() + (ADMIN_HELP if admin and command != '/start' else ""),
                               views.html_options(views.menu('help') if admin else []))
             return
         if not admin and command.startswith("/"):
@@ -145,8 +150,10 @@ class Telegram:
                         received_at = iso(datetime.fromtimestamp(message['date'], timezone.utc))
                     except (OverflowError, OSError, ValueError):
                         pass
-                result = self.store.enqueue(chat_id, user_id, message["message_id"], urls, can_allocate=bool(self.pipeline.fresh_sync()),
-                                            progress=True, invalid=len(invalid), received_at=received_at)
+                result = self.store.enqueue(chat_id, user_id, message["message_id"], urls,
+                                            can_allocate=bool(self.pipeline.fresh_sync()), progress=True,
+                                            invalid=len(invalid), required_destinations=self.config.new_delivery_platforms,
+                                            received_at=received_at)
                 if hasattr(self.pipeline, 'notify_work'):
                     self.pipeline.notify_work()
                 if not private:
@@ -157,8 +164,10 @@ class Telegram:
                 if result["replayed"]:
                     answer = f"Batch {result['batch_id'][:8]} sudah tercatat."
                 else:
+                    destinations = self.config.new_delivery_platforms
+                    names = ", ".join(PLATFORM_NAMES[platform] for platform in destinations)
                     answer = (f"Batch {result['batch_id'][:8]} diterima.\nVideo baru: {result['accepted']}\n"
-                              f"Tujuan kiriman: {result['accepted'] * 3}\nDuplikat: {result['duplicates']}\nLink tidak valid: {len(invalid)}\nRotasi TikTok, Facebook, dan YouTube melanjutkan giliran masing-masing.")
+                              f"Tujuan kiriman: {result['accepted'] * len(destinations)}\nDuplikat: {result['duplicates']}\nLink tidak valid: {len(invalid)}\nRotasi {names} melanjutkan giliran masing-masing.")
                     answer += "\nSlot WIB: " + ", ".join(f"{day}: {count}" for day, count in self.store.batch_slots(result["batch_id"]).items())
                     if not self.pipeline.fresh_sync():
                         answer += "\nAlokasi akun menunggu sinkronisasi Repliz."
@@ -191,7 +200,7 @@ class Telegram:
             return views.queue(self.store.queue(limit=6, offset=page * 6), total, page)
         if kind == 'accounts':
             return views.accounts(self.store.accounts(), page, fresh=self.store.snapshot_fresh())
-        return HELP + ADMIN_HELP, views.html_options(views.menu('help'))
+        return self.help_text() + ADMIN_HELP, views.html_options(views.menu('help'))
 
     async def panel_callback(self, query, match, video=False):
         user = query.get('from', {}).get('id')

@@ -49,7 +49,7 @@ Sesudah rehearsal/preview lulus, hentikan dua LaunchAgent lama dan buktikan lock
 
 Importer mempertahankan ID job/schedule/post, payload/path media, status/quota, tujuan asli, cursor, event, konteks dan dedupe reply. Asset sumber sama dari dua arsip memakai namespace terpisah sehingga hasil render lama tidak saling menimpa. Mengirim ulang URL lama tidak menambah tujuan baru. Sumber tidak diubah. Offset Telegram lama tidak disalin. Batch lama memiliki chat netral; outbox lama ditahan pada snapshot dengan jumlah tercatat, bukan dikirim menggunakan bot baru ke penerima yang belum terpetakan.
 
-Aktivasi pilot memakai satu Reel baru pilihan pengguna. Pastikan sumber belum ada pada jobs/assets legacy sebelum cutover. Set SQLite pilot_source_id ke sumber baru tersebut; gate ini membatasi POST publikasi ke satu sumber dengan satu akun eligible per platform. Pertahankan reply_enabled=false selama pilot karena gate sumber tidak membatasi worker reply. Hapus gate dan aktifkan reply hanya sesudah bukti pilot. Simpan tiga URL terbit, ID jadwal/post, checksum Drive, notifikasi, serta status automasi yang dibaca ulang. Posting YouTube dengan spesifikasi Shorts tetap perlu bukti hasil publik; jadwal diterima saja belum cukup.
+Aktivasi pilot memakai satu Reel baru pilihan pengguna. Pastikan sumber belum ada pada jobs/assets legacy sebelum cutover. Set SQLite pilot_source_id ke sumber baru tersebut; gate ini membatasi POST publikasi ke satu sumber dengan satu akun eligible per tujuan baru yang dikonfigurasi. Pertahankan reply_enabled=false selama pilot karena gate sumber tidak membatasi worker reply. Hapus gate dan aktifkan reply hanya sesudah bukti pilot. Simpan URL terbit, ID jadwal/post, checksum Drive, notifikasi, serta status automasi yang dibaca ulang. Saat ini target baru adalah TikTok dan Facebook; YouTube tidak dijadwalkan sampai channel tersedia. Histori/pending YouTube tetap dipantau menurut ID asalnya.
 
 ## Penjadwalan dan ruang kerja
 
@@ -59,7 +59,7 @@ Input publik maksimum100 link/pesan, backlog1000 asset, minimal10GiB ruang bebas
 
 ## Caption sumber, render, dan komentar
 
-Kebijakan `id-source-rewrite-v1` menulis ulang caption Instagram asli sekali untuk ketiga tujuan. Downloader membuktikan shortcode, URL, pemilik, isi caption, dan hash. Field caption kosong yang terkonfirmasi menghasilkan kredit sumber saja; caption hilang/rusak menahan proses. Emoji atau hashtag saja tidak menjadi cerita tambahan. Akun tujuan memakai hasil bersama tanpa AI persona lagi. Panduan [caption dan persona reply](COPY_AND_PERSONA.md) menjelaskan batas pemeriksaannya.
+Kebijakan `id-source-rewrite-v1` menulis ulang caption Instagram asli sekali untuk seluruh tujuan baru yang dikonfigurasi. Default saat ini TikTok dan Facebook. Downloader membuktikan shortcode, URL, pemilik, isi caption, dan hash. Field caption kosong yang terkonfirmasi menghasilkan kredit sumber saja; caption hilang/rusak menahan proses. Emoji atau hashtag saja tidak menjadi cerita tambahan. Akun tujuan memakai hasil bersama tanpa AI persona lagi. Panduan [caption dan persona reply](COPY_AND_PERSONA.md) menjelaskan batas pemeriksaannya.
 
 Render baru tidak menambah overlay hook. Pertahankan orientasi asli, zoom 110%, 30 fps, H.264/AAC, dan audio asli; `edits.hook_enabled=false` serta `edits.hook_seconds=0` disimpan sebagai jejak. `video.hook_seconds` pada config contoh bernilai 0, dan renderer mengabaikan nilai hook lama pada config lokal. Font tetap tersedia untuk laporan followers dan arsip gaya lama.
 

@@ -6,7 +6,7 @@ Permintaan 21 Oktober 2026: deskripsi cukup menulis ulang caption Instagram asli
 
 1. Downloader mencocokkan metadata Instagram dengan URL, shortcode, dan pemilik Reel. Caption asli disimpan utuh bersama bukti sumber dan hash. Judul otomatis, nama tampilan, caption MCP yang belum dibuktikan, frame, dan transkrip tidak menjadi pengganti caption asli.
 2. Satu tahap AI menulis ulang caption tersebut dengan perubahan ringan. Hasil yang sudah enak dibaca boleh dipertahankan. Maksud, nada, angka, nama, negasi, dan ketidakpastian sumber tetap dijaga; model tidak menambah reaksi, cerita, atau penjelasan adegan.
-3. TikTok, Facebook, dan YouTube memakai hasil bersama. Pemilihan akun tidak memicu rewrite persona lagi. YouTube tetap memiliki judul tersendiri yang merangkum caption yang sama.
+3. Semua tujuan baru yang dikonfigurasi memakai hasil bersama. Saat ini target baru TikTok dan Facebook; YouTube dapat diaktifkan kembali setelah channel tersedia. Pemilihan akun tidak memicu rewrite persona lagi. Asset lama mempertahankan payload dan judul tujuan yang tersimpan.
 4. Adapter menambahkan `source: @username` dari pemilik terverifikasi, lalu hashtag sumber yang dipilih. Batas karakter diperiksa sesudah kredit ditambahkan.
 
 Caption asli diperlakukan sebagai data, termasuk jika isinya memerintah AI mengabaikan aturan. Model tidak boleh mengaku sebagai pemilik, perekam, atau orang yang mengalami kejadian dalam caption sumber. Cerita orang pertama perlu ditulis sebagai cerita dari sumber bila identitas pembicara dapat tertukar. Pemakaian bahasa santai mengikuti nada caption, tanpa memaksakan slang, lelucon, atau emoji.

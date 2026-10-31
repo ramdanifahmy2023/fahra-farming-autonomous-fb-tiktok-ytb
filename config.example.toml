@@ -4,6 +4,7 @@ timezone = "Asia/Jakarta"
 daily_limit = 20
 mode = "shadow"
 publish_enabled = false
+new_delivery_platforms = ["tiktok", "facebook"]
 window_start = 8
 window_end = 23
 schedule_lead_seconds = 60

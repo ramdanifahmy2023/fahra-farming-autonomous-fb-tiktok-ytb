@@ -45,7 +45,8 @@ def initialize(config):
     return Store(config.database_path, daily_limit=config.section('workflow')['daily_limit'],
                  window_start=config.section('workflow')['window_start'], window_end=config.section('workflow')['window_end'],
                  schedule_lead_seconds=config.section('workflow')['schedule_lead_seconds'],
-                 facebook_publish_account_ids=config.facebook_publish_account_ids)
+                 facebook_publish_account_ids=config.facebook_publish_account_ids,
+                 new_delivery_platforms=config.new_delivery_platforms)
 
 
 async def start_webhook(config, store, pipeline, replies):
@@ -230,7 +231,8 @@ async def preview(config, production_store, args):
     folder = config.runtime / "previews" / uuid.uuid4().hex
     store = Store(folder / "preview.sqlite3")
     url, code = normalize_url(args.url)
-    result = store.enqueue(0, 0, 0, [(url, code)], can_allocate=False)
+    result = store.enqueue(0, 0, 0, [(url, code)], can_allocate=False,
+                           required_destinations=config.new_delivery_platforms)
     delivery = store.job(store.queue()[0]["id"])
     media_store = AssetStore(store)
     job = store.asset(delivery["asset_id"])
@@ -391,7 +393,8 @@ def main():
                     or args.command == 'cleanup' and not args.apply
                     or args.command == 'report' and args.action == 'status'
                     or args.command in {'reply','delivery'} and args.action in {'status','inspect'})
-        store = Store(config.database_path, readonly=True) if readonly else initialize(config)
+        store = (Store(config.database_path, readonly=True, new_delivery_platforms=config.new_delivery_platforms)
+                 if readonly else initialize(config))
         if args.command == 'health':
             from .health import report
             output(report(store))

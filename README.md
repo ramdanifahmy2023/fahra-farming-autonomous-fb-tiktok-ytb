@@ -1,13 +1,13 @@
 # Fahra Automation
 
-Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit, caption Instagram aslinya dirapikan, lalu hasil yang sama dijadwalkan ke satu TikTok, satu Facebook Page, dan satu YouTube Shorts. Bot melaporkan progres serta tautan ketika setiap tujuan benar-benar terbit.
+Kirim Reel Instagram ke **@Fahra_autonomousbot**. Satu video diunduh dan diedit, caption Instagram aslinya dirapikan, lalu hasil yang sama dijadwalkan ke TikTok dan Facebook Page. YouTube dikeluarkan dari target link baru selama tidak ada channel di Repliz. Bot melaporkan progres serta tautan ketika setiap tujuan benar-benar terbit.
 
 - Maksimal **20 video per akun per hari WIB**. Rotasi bertahan antarbatch/restart; akun baru ikut otomatis setelah snapshot lengkap. Akun terputus dilewati.
-- Satu asset, tiga antrean mandiri. YouTube penuh tidak mengulang TikTok/FB yang sudah berhasil.
+- Intake baru saat ini membuat satu asset dengan dua antrean mandiri, TikTok dan Facebook. Daftar tujuan ada di `workflow.new_delivery_platforms`; tambahkan YouTube setelah channel tersedia. Histori dan antrean lama tetap memakai tujuan yang tercatat.
 - Render baru tanpa teks hook, orientasi asli tanpa mirror, zoom 110%, audio asli. Format bersama 9:16, 3 sampai 90 detik, 30 fps, H.264/AAC. Caption/deskripsi mencantumkan `source: @username` Instagram yang terverifikasi.
 - Bank konten disinkronkan Drive Desktop. Seluruh checksum diverifikasi lagi sebelum setiap pengiriman.
 - [Caption dan persona reply](docs/COPY_AND_PERSONA.md): deskripsi hanya menulis ulang caption sumber, tanpa menambah cerita atau rewrite per akun. Caption kosong cukup memakai kredit sumber. Balasan tetap memakai konteks video dan komentar induk. Like/moderasi mengikuti kemampuan platform; YouTube tidak diberi like komentar.
-- File kerja dibersihkan paling cepat 24 jam setelah semua tujuan wajib terbit. Bank, Drive, konteks, frame, dan histori tetap disimpan.
+- File kerja dibersihkan paling cepat 24 jam setelah semua tujuan asset tersebut terbit. Bank, Drive, konteks, frame, dan histori tetap disimpan.
 
 TikTok **iq7fanspage** selalu dikecualikan. Paket ini menggantikan kedua workflow lama setelah verifikasi dan cutover; konfigurasi bawaan tetap `shadow` sampai kepemilikan diberikan.
 

@@ -34,13 +34,18 @@ class Connection(sqlite3.Connection):
 class Store:
     def __init__(self, path: Path, daily_limit=20, *, window_start=8, window_end=23, snapshot_ttl=600, readonly=False,
                  provider_limit_cooldown_seconds=21600, schedule_lead_seconds=60,
-                 facebook_publish_account_ids=None):
+                 facebook_publish_account_ids=None, new_delivery_platforms=PLATFORMS):
         if type(daily_limit) is not int or not 1 <= daily_limit <= 20:
             raise ValueError('Batas video harus antara satu dan 20 per akun/hari.')
         if not (type(window_start) is int and type(window_end) is int and 0 <= window_start < window_end <= 24):
             raise ValueError('Jendela jadwal tidak valid.')
         self.path = Path(path)
         self.daily_limit, self.window_start, self.window_end = daily_limit, window_start, window_end
+        if (not isinstance(new_delivery_platforms, (list, tuple)) or not new_delivery_platforms
+                or any(not isinstance(p, str) or p not in PLATFORMS for p in new_delivery_platforms)
+                or len(new_delivery_platforms) != len(set(new_delivery_platforms))):
+            raise ValueError('Tujuan delivery baru tidak valid.')
+        self.new_delivery_platforms = tuple(new_delivery_platforms)
         self.snapshot_ttl = snapshot_ttl
         if facebook_publish_account_ids is not None:
             if (not facebook_publish_account_ids
@@ -1156,7 +1161,8 @@ class Store:
                 ) GROUP BY origin""")]
             return {"date": day, "accounts": len(loads), "reserved_or_published": sum(n for a, n in loads.values()),
                     "daily_capacity": len(loads) * self.daily_limit, "daily_limit": self.daily_limit, "platforms": platforms,
-                    "paired_daily_capacity": min(p["daily_capacity"] for p in platforms.values()),
+                    "paired_daily_capacity": min(platforms[p]["daily_capacity"] for p in self.new_delivery_platforms),
+                    "new_delivery_platforms": list(self.new_delivery_platforms),
                     "reels": c.execute("SELECT count(*) FROM assets").fetchone()[0],
                     "source_groups": sources,
                     "sync_in_progress": self.setting(c, 'sync_in_progress', False),

@@ -1,5 +1,9 @@
 # Tes penerimaan implementasi
 
+## Kebijakan tujuan baru 31 Oktober 2026
+
+Karena Repliz saat ini tidak memiliki channel YouTube, Reel yang baru diterima membuat dua delivery: TikTok dan Facebook. `workflow.new_delivery_platforms` menjadi sumber konfigurasi yang ditampilkan pada bantuan Telegram, dipakai saat ingest, dan dipakai preview lokal. YouTube bisa ditambahkan setelah channel tersedia. Job/asset/jadwal/reply/history lama tetap tidak berubah; tidak ada penghapusan atau backfill.
+
 Dokumen ini memuat kriteria penerimaan dan hasil yang sudah dibuktikan. Pada checkpoint implementasi 16 Oktober 2026, commit [54e4417](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/commit/54e4417d01b031b472f541a4492418dcbfe58d05) lulus seluruh 263 tes offline tanpa skip serta CI full pada [branch](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853332246) dan [main](https://github.com/ramdanifahmy2023/fahra-farming-autonomous-fb-tiktok-ytb/actions/runs/38853445793). CI sudah menguji source dan seluruh suite, bukan hanya dokumen seperti pada tahap audit awal. Seluruh matriks penerimaan belum dinyatakan selesai: preview dan rehearsal berikut belum menjadi bukti publikasi atau aksi komentar nyata.
 
 ## Kebijakan penerimaan 21 Oktober 2026
@@ -46,7 +50,7 @@ Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit a
 | ID | Skenario | Hasil wajib |
 | --- | --- | --- |
 | A01 | Credential hyphen/underscore, field duplikat, endpoint salah, key hilang | Field didukung terbaca, konflik ditolak, tidak ada key/token/URL Telegram bertoken pada log |
-| A02 | Satu link, batch 20/100, update Telegram replay, URL parameter berbeda | Satu asset per sumber canonical; tepat tiga delivery wajib; replay tidak menggandakan batch/job |
+| A02 | Satu link, batch 20/100, update Telegram replay, URL parameter berbeda | Satu asset per sumber canonical; jumlah dan tujuan delivery cocok dengan `workflow.new_delivery_platforms` (default saat ini TikTok+Facebook); replay tidak menggandakan batch/job |
 | A03 | Callback/outbox HTTP 400/403, timeout, 429, crash sebelum/sesudah offset, kontrol oleh nonadmin | Pesan permanen diisolasi; update lain tetap diproses; offset maju sesudah ingest durable; input publik tidak memberi hak kontrol atau akses batch orang lain |
 | A04 | Akun baru masing-masing platform, disconnect/reconnect, ID duplikat, snapshot 2 halaman terputus | Akun baru ikut rotasi otomatis hanya setelah snapshot lengkap; partial tidak mengganti pool; reconnect tidak reset kuota; iq7fanspage tak pernah eligible |
 | A05 | GET akun sukses, GET jadwal gagal/menunggu, freshness/generation berubah pada setiap await | Akun+kuota+generation diterapkan atomik; tidak ada reservasi/intent pada snapshot tidak sah |
@@ -64,8 +68,8 @@ Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit a
 | --- | --- | --- |
 | M01 | Download start sukses lalu crash sebelum ID; orphan dapat/tidak dapat dipetakan; completed/partial/failed; MCP lock/timeout | Pemetaan terbukti dipakai ulang; start ambigu ditahan untuk pemulihan; komputasi lokal boleh diulang aman tanpa artifact resmi ganda; manifest cleanup konsisten |
 | M02 | Landscape/portrait, <3 detik, 90/180/>180 detik, audio kosong, codec/ukuran tidak cocok | Validator per platform jelas; tidak diam-diam memotong atau mengklaim Shorts pada video tidak sesuai |
-| M03 | Caption asli, kosong, emoji/hashtag saja, metadata hilang/rusak, prompt injection; konteks reply dari frame/audio terpisah | Rewrite hanya menerima caption terverifikasi dan mempertahankan maksud sumber. Hasil bersama dipakai tiga tujuan, tanpa AI persona tambahan. Caption tanpa narasi tidak menjadi cerita; metadata gagal ditahan. Confidence kesetiaan caption terpisah dari confidence video; data sumber tidak menjadi instruksi sistem |
-| M04 | Preview nyata dari link yang diberikan pengguna, tanpa membuat schedule; sumber 30/60 fps dan hook lama pada input/config | Satu download/render/Drive, orientasi asli tanpa mirror, zoom 110%, 30 fps, H.264/AAC, audio asli, tanpa input/filter overlay pada seluruh durasi. Kredit Instagram terverifikasi dan payload tiga platform valid; hasil rendered/Bank/Drive lama tidak ditulis ulang |
+| M03 | Caption asli, kosong, emoji/hashtag saja, metadata hilang/rusak, prompt injection; konteks reply dari frame/audio terpisah | Rewrite hanya menerima caption terverifikasi dan mempertahankan maksud sumber. Hasil bersama dipakai semua tujuan yang dikonfigurasi, tanpa AI persona tambahan. Caption tanpa narasi tidak menjadi cerita; metadata gagal ditahan. Confidence kesetiaan caption terpisah dari confidence video; data sumber tidak menjadi instruksi sistem |
+| M04 | Preview nyata dari link yang diberikan pengguna, tanpa membuat schedule; sumber 30/60 fps dan hook lama pada input/config | Satu download/render/Drive, orientasi asli tanpa mirror, zoom 110%, 30 fps, H.264/AAC, audio asli, tanpa input/filter overlay pada seluruh durasi. Kredit Instagram terverifikasi dan payload semua tujuan yang dikonfigurasi valid; hasil rendered/Bank/Drive lama tidak ditulis ulang |
 | M05 | Google Drive pending sync, HTML/login, duplikat nama, ID cache usang, byte berubah dengan header MP4 sama | Seluruh checksum/ukuran sebelum tiap POST cocok atau nol POST; file untuk besok diperiksa kembali |
 | C01 | Persona berbeda, restart, versi berubah, delivery berpindah akun sebelum intent | Caption `id-source-rewrite-v1` tetap memakai hasil bersama tanpa rewrite persona. Persona dan bukti video tepat melekat ke draft reply; confidence caption tidak dianggap bukti video. Metadata/draft lama mempertahankan versi yang sesuai dan intent tetap immutable |
 | C02 | Top-level/nested comment, induk hilang, reply sudah ada, komentar edited/deleted | Konteks thread benar; induk hilang ditahan; komentar diri sendiri/duplikat tidak dibalas |
@@ -82,10 +86,10 @@ Perubahan berikutnya pada 16 Oktober: pengguna meminta tanpa mirror dan kredit a
 | O02 | Shadow mode dan proses lama masih running | Nol POST/mutasi automasi oleh paket baru; startup hak kirim ditolak jika owner lama masih aktif |
 | O03 | Rollback setelah paket baru membuat jadwal/reply | Rekonsiliasi delta dan ownership dilakukan sebelum owner lama boleh aktif; restore DB lama saja tidak cukup |
 | O04 | Disk hampir penuh, Drive offline, volume lepas, Docker mati, 9Router gagal | Ingest/backpressure dan retry beralasan; health membedakan proses hidup dari loop sehat; token tak bocor |
-| O05 | Semua tiga tujuan published versus satu failed/unknown; frame hilang; peer/arsip rusak | Cleanup hanya setelah semua tujuan +24 jam, hash penuh dan referensi lengkap; bank/Drive/konteks tetap utuh |
+| O05 | Semua tujuan asset published versus satu failed/unknown; frame hilang; peer/arsip rusak | Cleanup hanya setelah seluruh tujuan yang tercatat pada asset +24 jam, hash penuh dan referensi lengkap; bank/Drive/konteks tetap utuh |
 | O06 | Shared MCP source dipakai preview/arsip dua proyek lama; crash saat unlink | File dilindungi; jurnal per file dan shared lock benar; tidak ada penghapusan rekursif |
 | O07 | 64 akun snapshot awal, batas 20, backlog 100+ sumber, API lambat | Budget panggilan/CPU/disk terukur; TTL/limiter tidak saling mengunci semua subsistem; progres tetap informatif |
-| O08 | Pilot satu sumber nyata setelah hak kirim dialihkan | Tiga schedule ID, tiga post ID/URL, bukti video benar-benar terbit dan YouTube Shorts, notifikasi Telegram diterima |
+| O08 | Pilot satu sumber nyata setelah hak kirim dialihkan | Satu schedule ID dan post ID/URL per tujuan aktif (saat ini TikTok dan Facebook), bukti video benar-benar terbit, notifikasi Telegram diterima; YouTube hanya saat diaktifkan dengan channel tersedia |
 | O09 | Pilot komentar yang memang diotorisasi pada tiap platform | Draft sesuai konteks/persona, request/Report sukses dibedakan dari hasil terlihat, tidak ada native/custom ganda |
 
 Suite offline memakai DB/file sementara, tidak credential produksi. Preview integrasi memakai runtime terpisah dan tidak POST publikasi. Pilot nyata hanya pada fase aktivasi yang dijalankan secara eksplisit setelah kriteria sebelumnya lulus. Sebelum cutover, ulang inventaris dan validasi batas provider yang bisa berubah.
